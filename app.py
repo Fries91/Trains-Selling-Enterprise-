@@ -1,5 +1,4 @@
 import os
-import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -17,11 +16,11 @@ from db import (
     add_train,
     list_trains,
     delete_train,
+    set_company_ids,
 )
 from torn_api import me_basic, company_profile, normalize_company
 
 load_dotenv()
-
 app = Flask(__name__)
 
 ADMIN_KEYS = [k.strip() for k in (os.getenv("ADMIN_KEYS") or "").split(",") if k.strip()]
@@ -110,6 +109,49 @@ def require_session() -> Optional[Dict[str, Any]]:
     return ses
 
 
+@app.route("/company_ids", methods=["GET", "POST", "OPTIONS"])
+def company_ids():
+    if request.method == "OPTIONS":
+        return ok({"ok": True})
+
+    ses = require_session()
+    if not ses:
+        return fail("Missing/invalid session token", 401)
+
+    user = get_user(ses["user_id"])
+    if not user:
+        return fail("User not found", 404)
+
+    if request.method == "GET":
+        ids = user.get("company_ids") or []
+        if not isinstance(ids, list):
+            ids = []
+        return ok({"company_ids": [str(x) for x in ids], "server_time": utc_now()})
+
+    # POST: replace list
+    try:
+        body = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return fail("Bad JSON", 400)
+
+    ids = body.get("company_ids", [])
+    if not isinstance(ids, list):
+        return fail("company_ids must be a list", 400)
+
+    cleaned: List[str] = []
+    for x in ids:
+        s = str(x).strip()
+        if not s:
+            continue
+        if not s.isdigit():
+            continue
+        if s not in cleaned:
+            cleaned.append(s)
+
+    set_company_ids(ses["user_id"], cleaned)
+    return ok({"saved": True, "company_ids": cleaned, "server_time": utc_now()})
+
+
 @app.route("/state", methods=["GET", "OPTIONS"])
 def state():
     if request.method == "OPTIONS":
@@ -123,7 +165,6 @@ def state():
     if not user:
         return fail("User not found", 404)
 
-    # NOTE: company_ids is stored per user.
     company_ids: List[str] = []
     raw_ids = user.get("company_ids") or []
     if isinstance(raw_ids, list):
@@ -135,12 +176,11 @@ def state():
             raw = company_profile(user["api_key"], cid)
             companies.append(normalize_company(cid, raw))
         except Exception:
-            # Don’t hard-fail the whole state if 1 company errors
             companies.append({"id": str(cid), "name": f"Company #{cid}", "director": "", "employees": []})
 
     trains = list_trains(user["user_id"])
 
-    # attach company_name if possible (helps UI)
+    # attach company_name for UI convenience
     name_map = {c["id"]: c.get("name") for c in companies}
     for t in trains:
         cid = str(t.get("company_id") or "")
@@ -183,7 +223,6 @@ def trains_add():
     if amount <= 0:
         return fail("Amount must be > 0", 400)
 
-    # company_id can be blank if user wants “general” record
     new_id = add_train(
         user_id=ses["user_id"],
         company_id=company_id,
@@ -215,7 +254,9 @@ def trains_delete(train_id: str):
     return ok({"deleted": True, "server_time": utc_now()})
 
 
+# Init db on import (works on Render too)
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
