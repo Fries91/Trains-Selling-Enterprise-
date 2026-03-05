@@ -1,5 +1,5 @@
 import requests
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 API_BASE = "https://api.torn.com"
 
@@ -12,9 +12,6 @@ def _get(path: str, params: Dict[str, Any], timeout: int = 25) -> Dict[str, Any]
 
 
 def me_basic(api_key: str) -> Dict[str, Any]:
-    """
-    Validate key + get user_id + name.
-    """
     data = _get("/user/", {"selections": "basic", "key": api_key})
     if "error" in data:
         raise ValueError(data["error"].get("error", "Torn API error"))
@@ -22,10 +19,6 @@ def me_basic(api_key: str) -> Dict[str, Any]:
 
 
 def company_profile(api_key: str, company_id: str) -> Dict[str, Any]:
-    """
-    Fetch a company's profile+employees.
-    Torn supports: /company/ with id parameter.
-    """
     data = _get(
         "/company/",
         {"selections": "profile,employees", "id": company_id, "key": api_key},
@@ -37,19 +30,20 @@ def company_profile(api_key: str, company_id: str) -> Dict[str, Any]:
 
 def normalize_company(company_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Make output stable for the userscript:
+    Stable output for your userscript:
     { id, name, director, employees:[{id,name}] }
     """
-    profile = raw.get("company") or raw.get("profile") or raw.get("company_profile") or {}
+    # Torn responses can vary; support multiple shapes
+    profile = raw.get("company") or raw.get("profile") or raw.get("company_profile") or raw or {}
     employees_block = raw.get("company_employees") or raw.get("employees") or {}
 
-    # name / director fields vary a bit across Torn responses
     name = profile.get("name") or profile.get("company_name") or ""
-    director = profile.get("director") or profile.get("director_name") or profile.get("president") or ""
+    director = profile.get("director") or profile.get("director_name") or ""
 
-    employees: List[Dict[str, Any]] = []
+    employees: List[Dict[str, str]] = []
+
+    # Most common: dict keyed by player id
     if isinstance(employees_block, dict):
-        # employees often keyed by id: {"123":{"name":"X",...}, ...}
         for k, v in employees_block.items():
             if not isinstance(v, dict):
                 continue
@@ -75,6 +69,6 @@ def normalize_company(company_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": str(company_id),
         "name": name or f"Company #{company_id}",
-        "director": director,
+        "director": director or "",
         "employees": employees,
     }
