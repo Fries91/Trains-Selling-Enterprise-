@@ -1,8 +1,10 @@
+import io
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from dotenv import load_dotenv
 
 from db import (
@@ -22,7 +24,7 @@ from db import (
     hof_count,
 )
 from torn_api import me_basic, company_profile, normalize_company
-from importer import import_hof_workers_from_json_file
+from importer import import_hof_workers_from_json_file, import_hof_workers_from_payload
 
 load_dotenv()
 app = Flask(__name__)
@@ -46,6 +48,10 @@ def fail(message: str, status: int = 400, details: Optional[str] = None):
     if details:
         payload["details"] = details
     return jsonify(payload), status
+
+
+def check_importer_secret(raw: str) -> bool:
+    return bool(IMPORTER_SECRET) and (raw or "").strip() == IMPORTER_SECRET
 
 
 @app.after_request
@@ -301,7 +307,7 @@ def hof_import():
         return ok({})
 
     header_secret = (request.headers.get("X-Importer-Secret") or "").strip()
-    if not IMPORTER_SECRET or header_secret != IMPORTER_SECRET:
+    if not check_importer_secret(header_secret):
         return fail("Invalid importer secret", 401)
 
     try:
@@ -317,7 +323,7 @@ def hof_upsert():
         return ok({})
 
     header_secret = (request.headers.get("X-Importer-Secret") or "").strip()
-    if not IMPORTER_SECRET or header_secret != IMPORTER_SECRET:
+    if not check_importer_secret(header_secret):
         return fail("Invalid importer secret", 401)
 
     try:
@@ -348,6 +354,166 @@ def hof_upsert():
         count += 1
 
     return ok({"imported": count, "hof_count": hof_count(), "server_time": utc_now()})
+
+
+@app.route("/admin/uploader", methods=["GET"])
+def admin_uploader():
+    html = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>T.S.E HoF Uploader</title>
+  <style>
+    body{font-family:Arial,sans-serif;background:#0b1220;color:#eef3ff;margin:0;padding:20px}
+    .card{max-width:760px;margin:0 auto;background:#0f1b33;border:1px solid rgba(214,179,90,.28);border-radius:18px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.45)}
+    h1{margin:0 0 8px;font-size:22px}
+    .sub{color:#aebddd;font-size:13px;margin-bottom:18px}
+    label{display:block;margin:12px 0 6px;color:#aebddd;font-size:12px;font-weight:700}
+    input,textarea{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:#0b1220;color:#eef3ff}
+    button{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(214,179,90,.35);background:#13213f;color:#eef3ff;font-weight:700;cursor:pointer}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .row > div{flex:1 1 220px}
+    .ok{color:#34d57a}
+    .err{color:#ff5968}
+    pre{background:#0b1220;padding:12px;border-radius:12px;overflow:auto;border:1px solid rgba(255,255,255,.08)}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>T.S.E Headquarters HoF Uploader</h1>
+    <div class="sub">Upload your <b>hof_workers.json</b> from your phone or paste JSON directly.</div>
+
+    <div class="row">
+      <div>
+        <label>Importer Secret</label>
+        <input id="secret" type="password" placeholder="IMPORTER_SECRET">
+      </div>
+      <div>
+        <label>JSON File</label>
+        <input id="file" type="file" accept=".json,application/json">
+      </div>
+    </div>
+
+    <label>Or Paste JSON</label>
+    <textarea id="json" rows="12" placeholder='{"rows":[{"id":"123","name":"Player","manual_labor":1,"intelligence":2,"endurance":3,"job_status":"company","company_name":"Example"}]}'></textarea>
+
+    <div class="row">
+      <div><button id="uploadFile">Upload File</button></div>
+      <div><button id="uploadJson">Upload Pasted JSON</button></div>
+      <div><button id="serverImport">Run Server File Import</button></div>
+    </div>
+
+    <label>Result</label>
+    <pre id="result">Ready.</pre>
+  </div>
+
+<script>
+const result = document.getElementById("result");
+
+function show(obj, isError=false){
+  result.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  result.className = isError ? "err" : "ok";
+}
+
+async function postJson(url, body, secret){
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Importer-Secret": secret
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  if (!res.ok) throw new Error((json && (json.error || json.details)) || text || ("HTTP " + res.status));
+  return json;
+}
+
+document.getElementById("uploadJson").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  const raw = document.getElementById("json").value.trim();
+  if (!secret) return show("Missing importer secret", true);
+  if (!raw) return show("Paste some JSON first", true);
+
+  try {
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed) ? parsed : (parsed.rows || parsed.results || parsed.players || parsed.workers || parsed.data || []);
+    const json = await postJson("/hof/upsert", { rows }, secret);
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+
+document.getElementById("uploadFile").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  const file = document.getElementById("file").files[0];
+  if (!secret) return show("Missing importer secret", true);
+  if (!file) return show("Choose a JSON file first", true);
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const rows = Array.isArray(parsed) ? parsed : (parsed.rows || parsed.results || parsed.players || parsed.workers || parsed.data || []);
+    const json = await postJson("/hof/upsert", { rows }, secret);
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+
+document.getElementById("serverImport").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  if (!secret) return show("Missing importer secret", true);
+
+  try {
+    const res = await fetch("/hof/import", {
+      method: "POST",
+      headers: { "X-Importer-Secret": secret }
+    });
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    if (!res.ok) throw new Error((json && (json.error || json.details)) || text || ("HTTP " + res.status));
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+</script>
+</body>
+</html>
+"""
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/hof/upload-json", methods=["POST", "OPTIONS"])
+def hof_upload_json():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    header_secret = (request.headers.get("X-Importer-Secret") or request.form.get("secret") or "").strip()
+    if not check_importer_secret(header_secret):
+        return fail("Invalid importer secret", 401)
+
+    if "file" not in request.files:
+        return fail("Missing file", 400)
+
+    f = request.files["file"]
+    if not f or not f.filename:
+        return fail("Missing file", 400)
+
+    try:
+        raw = f.read()
+        payload = json.loads(raw.decode("utf-8"))
+        imported = import_hof_workers_from_payload(payload)
+        return ok({"imported": imported, "hof_count": hof_count(), "server_time": utc_now()})
+    except Exception as e:
+        return fail("Upload import failed", 500, str(e))
 
 
 init_db()
