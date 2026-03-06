@@ -1,4 +1,3 @@
-import io
 import json
 import os
 from datetime import datetime, timezone
@@ -60,6 +59,27 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Session-Token, X-Importer-Secret"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     return resp
+
+
+@app.route("/")
+def home():
+    return ok({
+        "service": "tse-headquarters",
+        "ok": True,
+        "server_time": utc_now(),
+        "routes": [
+            "/health",
+            "/api/auth",
+            "/state",
+            "/company_ids",
+            "/trains",
+            "/hof/search",
+            "/hof/import",
+            "/hof/upsert",
+            "/hof/upload-json",
+            "/admin/uploader",
+        ],
+    })
 
 
 @app.route("/health", methods=["GET"])
@@ -335,25 +355,8 @@ def hof_upsert():
     if not isinstance(rows, list):
         return fail("rows must be a list", 400)
 
-    count = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        player_id = str(row.get("id") or "").strip()
-        if not player_id:
-            continue
-        upsert_hof_worker(
-            player_id=player_id,
-            name=str(row.get("name") or ""),
-            manual_labor=int(row.get("manual_labor") or 0),
-            intelligence=int(row.get("intelligence") or 0),
-            endurance=int(row.get("endurance") or 0),
-            job_status=str(row.get("job_status") or "unknown"),
-            company_name=str(row.get("company_name") or ""),
-        )
-        count += 1
-
-    return ok({"imported": count, "hof_count": hof_count(), "server_time": utc_now()})
+    imported = import_hof_workers_from_payload({"rows": rows})
+    return ok({"imported": imported, "hof_count": hof_count(), "server_time": utc_now()})
 
 
 @app.route("/admin/uploader", methods=["GET"])
