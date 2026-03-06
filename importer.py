@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 from db import upsert_hof_worker
 
@@ -38,13 +38,7 @@ def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def import_hof_workers_from_json_file(filepath: str) -> int:
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"HoF data file not found: {filepath}")
-
-    with open(filepath, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-
+def import_hof_workers_from_payload(payload: Any) -> int:
     rows = _extract_rows(payload)
     imported = 0
 
@@ -72,3 +66,13 @@ def import_hof_workers_from_json_file(filepath: str) -> int:
         imported += 1
 
     return imported
+
+
+def import_hof_workers_from_json_file(filepath: str) -> int:
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"HoF data file not found: {filepath}")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    return import_hof_workers_from_payload(payload)
