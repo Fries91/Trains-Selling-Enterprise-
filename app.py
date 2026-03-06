@@ -18,13 +18,18 @@ from db import (
     delete_train,
     set_company_ids,
     list_hof_workers,
+    upsert_hof_worker,
+    hof_count,
 )
 from torn_api import me_basic, company_profile, normalize_company
+from importer import import_hof_workers_from_json_file
 
 load_dotenv()
 app = Flask(__name__)
 
 ADMIN_KEYS = [k.strip() for k in (os.getenv("ADMIN_KEYS") or "").split(",") if k.strip()]
+IMPORTER_SECRET = (os.getenv("IMPORTER_SECRET") or "").strip()
+HOF_DATA_FILE = (os.getenv("HOF_DATA_FILE") or "hof_workers.json").strip()
 
 
 def utc_now() -> str:
@@ -39,21 +44,25 @@ def ok(data: Dict[str, Any], status: int = 200):
 def fail(message: str, status: int = 400, details: Optional[str] = None):
     payload: Dict[str, Any] = {"ok": False, "error": message}
     if details:
-      payload["details"] = details
+        payload["details"] = details
     return jsonify(payload), status
 
 
 @app.after_request
 def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Session-Token"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Session-Token, X-Importer-Secret"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     return resp
 
 
 @app.route("/health", methods=["GET"])
 def health():
-    return ok({"service": "tse-headquarters", "server_time": utc_now()})
+    return ok({
+        "service": "tse-headquarters",
+        "server_time": utc_now(),
+        "hof_count": hof_count(),
+    })
 
 
 @app.route("/api/auth", methods=["POST", "OPTIONS"])
@@ -284,6 +293,61 @@ def hof_search():
 
     results.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
     return ok({"results": results[:limit], "count": len(results[:limit]), "server_time": utc_now()})
+
+
+@app.route("/hof/import", methods=["POST", "OPTIONS"])
+def hof_import():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    header_secret = (request.headers.get("X-Importer-Secret") or "").strip()
+    if not IMPORTER_SECRET or header_secret != IMPORTER_SECRET:
+        return fail("Invalid importer secret", 401)
+
+    try:
+        imported = import_hof_workers_from_json_file(HOF_DATA_FILE)
+        return ok({"imported": imported, "hof_count": hof_count(), "server_time": utc_now()})
+    except Exception as e:
+        return fail("Import failed", 500, str(e))
+
+
+@app.route("/hof/upsert", methods=["POST", "OPTIONS"])
+def hof_upsert():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    header_secret = (request.headers.get("X-Importer-Secret") or "").strip()
+    if not IMPORTER_SECRET or header_secret != IMPORTER_SECRET:
+        return fail("Invalid importer secret", 401)
+
+    try:
+        body = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return fail("Bad JSON", 400)
+
+    rows = body.get("rows") or []
+    if not isinstance(rows, list):
+        return fail("rows must be a list", 400)
+
+    count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        player_id = str(row.get("id") or "").strip()
+        if not player_id:
+            continue
+        upsert_hof_worker(
+            player_id=player_id,
+            name=str(row.get("name") or ""),
+            manual_labor=int(row.get("manual_labor") or 0),
+            intelligence=int(row.get("intelligence") or 0),
+            endurance=int(row.get("endurance") or 0),
+            job_status=str(row.get("job_status") or "unknown"),
+            company_name=str(row.get("company_name") or ""),
+        )
+        count += 1
+
+    return ok({"imported": count, "hof_count": hof_count(), "server_time": utc_now()})
 
 
 init_db()
