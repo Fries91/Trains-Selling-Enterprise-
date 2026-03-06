@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏢
 // @namespace    fries91-tse-hq
-// @version      8.2.0
+// @version      8.2.1
 // @description  T.S.E Headquarters hub overlay. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -22,7 +22,10 @@
   if (window.__TSE_HQ_LOADED__) return;
   window.__TSE_HQ_LOADED__ = true;
 
-  if (document.getElementById("tse_hq_badge") || document.getElementById("tse_hq_panel")) return;
+  const OLD_BADGE = document.getElementById("tse_hq_badge");
+  const OLD_PANEL = document.getElementById("tse_hq_panel");
+  if (OLD_BADGE) OLD_BADGE.remove();
+  if (OLD_PANEL) OLD_PANEL.remove();
 
   const DEFAULT_BASE_URL = "https://trains-selling-enterprise.onrender.com";
 
@@ -155,14 +158,14 @@
       z-index:2147483647;
       left:18px;
       top:180px;
-      width:56px;
-      height:56px;
-      border-radius:16px;
+      width:44px;
+      height:44px;
+      border-radius:14px;
       background:
         radial-gradient(120% 120% at 25% 12%, rgba(242,212,135,.38), rgba(214,179,90,.16) 40%, rgba(15,27,51,.96) 75%),
         linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,0));
       border:1px solid rgba(214,179,90,.34);
-      box-shadow:0 12px 35px rgba(0,0,0,.55);
+      box-shadow:0 10px 28px rgba(0,0,0,.55);
       display:flex;
       align-items:center;
       justify-content:center;
@@ -171,12 +174,25 @@
       -webkit-user-select:none;
       touch-action:none;
       backdrop-filter:blur(6px);
+      font-size:21px;
+      line-height:1;
     }
     #tse_hq_badge:active{ transform:scale(.98); }
-    #tse_hq_badge svg{ width:30px; height:30px; filter:drop-shadow(0 4px 10px rgba(0,0,0,.55)); pointer-events:none; }
+    #tse_hq_badge .emoji{
+      pointer-events:none;
+      transform:translateY(-.5px);
+      filter:drop-shadow(0 2px 6px rgba(0,0,0,.45));
+    }
     #tse_hq_badge .dot{
-      position:absolute; right:6px; top:6px; width:10px; height:10px; border-radius:99px;
-      background:var(--tse-red); box-shadow:0 0 0 2px rgba(11,18,32,.95); display:none;
+      position:absolute;
+      right:4px;
+      top:4px;
+      width:8px;
+      height:8px;
+      border-radius:99px;
+      background:var(--tse-red);
+      box-shadow:0 0 0 2px rgba(11,18,32,.95);
+      display:none;
       pointer-events:none;
     }
     #tse_hq_badge.hasDot .dot{ display:block; }
@@ -184,9 +200,9 @@
     #tse_hq_panel{
       position:fixed;
       z-index:2147483646;
-      left:86px;
+      left:74px;
       top:120px;
-      width:min(620px, calc(100vw - 98px));
+      width:min(620px, calc(100vw - 86px));
       max-height:min(80vh, 700px);
       background:
         radial-gradient(120% 140% at 20% 0%, rgba(214,179,90,.10), rgba(11,18,32,.96) 60%),
@@ -340,11 +356,7 @@
   badge.id = "tse_hq_badge";
   badge.innerHTML = `
     <div class="dot"></div>
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4 20V9.5L12 4L20 9.5V20" stroke="rgba(242,212,135,.95)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M8 20V12.5H16V20" stroke="rgba(242,212,135,.95)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M10 8.2H14" stroke="rgba(255,255,255,.25)" stroke-width="1.3" stroke-linecap="round"/>
-    </svg>
+    <div class="emoji">🏤</div>
   `;
 
   const panel = document.createElement("div");
@@ -368,8 +380,8 @@
       requestAnimationFrame(mountUi);
       return;
     }
-    if (!document.getElementById("tse_hq_badge")) document.body.appendChild(badge);
-    if (!document.getElementById("tse_hq_panel")) document.body.appendChild(panel);
+    document.body.appendChild(badge);
+    document.body.appendChild(panel);
     start();
   }
 
@@ -423,12 +435,12 @@
     }
 
     function applyUIPositions() {
-      const bw = 56, bh = 56;
+      const bw = 44, bh = 44;
       const maxX = window.innerWidth - bw - 6;
       const maxY = window.innerHeight - bh - 6;
 
       ui.badge = ui.badge || { x: 18, y: 180 };
-      ui.panel = ui.panel || { x: 86, y: 120 };
+      ui.panel = ui.panel || { x: 74, y: 120 };
 
       ui.badge.x = clamp(ui.badge.x ?? 18, 6, Math.max(6, maxX));
       ui.badge.y = clamp(ui.badge.y ?? 180, 6, Math.max(6, maxY));
@@ -437,13 +449,13 @@
       badge.style.top = `${ui.badge.y}px`;
 
       const r = panel.getBoundingClientRect();
-      const pw = Math.max(320, r.width || Math.min(620, window.innerWidth - 98));
+      const pw = Math.max(320, r.width || Math.min(620, window.innerWidth - 86));
       const ph = Math.max(240, r.height || Math.min(window.innerHeight * 0.8, 700));
       const pMaxX = Math.max(6, window.innerWidth - pw - 6);
       const pMaxY = Math.max(6, window.innerHeight - ph - 6);
 
-      ui.panel.x = clamp(ui.panel.x ?? (ui.badge.x + 68), 6, pMaxX);
-      ui.panel.y = clamp(ui.panel.y ?? (ui.badge.y - 40), 6, pMaxY);
+      ui.panel.x = clamp(ui.panel.x ?? (ui.badge.x + 56), 6, pMaxX);
+      ui.panel.y = clamp(ui.panel.y ?? (ui.badge.y - 30), 6, pMaxY);
 
       panel.style.left = `${ui.panel.x}px`;
       panel.style.top = `${ui.panel.y}px`;
@@ -466,10 +478,8 @@
         const r = el.getBoundingClientRect();
         originX = r.left;
         originY = r.top;
-        if (typeof el.setPointerCapture === "function" && ev.pointerId !== undefined) {
-          try { el.setPointerCapture(ev.pointerId); } catch {}
-        }
         ev.preventDefault?.();
+        ev.stopPropagation?.();
       };
 
       const move = (ev) => {
@@ -502,8 +512,8 @@
     }
 
     const badgeDrag = makeDraggable(badge, (x, y) => {
-      ui.badge.x = clamp(x, 6, window.innerWidth - 56 - 6);
-      ui.badge.y = clamp(y, 6, window.innerHeight - 56 - 6);
+      ui.badge.x = clamp(x, 6, window.innerWidth - 44 - 6);
+      ui.badge.y = clamp(y, 6, window.innerHeight - 44 - 6);
       badge.style.left = `${ui.badge.x}px`;
       badge.style.top = `${ui.badge.y}px`;
       saveUI();
@@ -549,12 +559,7 @@
       e.preventDefault();
       e.stopPropagation();
       togglePanel();
-    });
-
-    badge.addEventListener("touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    }, { passive: false });
+    }, true);
 
     panel.querySelector("#tse_hq_close").addEventListener("click", (e) => {
       e.preventDefault();
@@ -1187,15 +1192,6 @@
             <button class="tse_btn gold" id="tse_cids_load">Load From Server</button>
             <button class="tse_btn gold" id="tse_cids_save">Save To Server</button>
             <div class="tse_small" id="tse_cids_msg"></div>
-          </div>
-        </div>
-
-        <div class="tse_card">
-          <div class="tse_row">
-            <div class="tse_field" style="flex:1 1 100%;">
-              <div class="tse_label">Auto Update</div>
-              <div class="tse_small">Your update URL is already set to your raw GitHub userscript link.</div>
-            </div>
           </div>
         </div>
       `;
