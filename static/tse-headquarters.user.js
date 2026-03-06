@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.3.0
+// @version      8.4.0
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -36,7 +36,6 @@
   const K_USER   = "tse_hq_user_v1";
   const K_UI     = "tse_hq_ui_v1";
   const K_NOTES  = "tse_hq_notes_v1";
-  const K_KEYS   = "tse_hq_company_keys_v1";
 
   const uiDefault = {
     open: false,
@@ -386,6 +385,25 @@
     .tse_kpi .k{ font-size:10px; color:var(--tse-muted); font-weight:900; }
     .tse_kpi .v{ font-size:13px; font-weight:1000; margin-top:2px; }
 
+    .tse_key_status{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      font-size:11px;
+      color:var(--tse-muted);
+      margin-top:6px;
+    }
+    .tse_key_status .dot{
+      width:8px;
+      height:8px;
+      border-radius:99px;
+      background:var(--tse-red);
+      display:inline-block;
+    }
+    .tse_key_status.ok .dot{
+      background:var(--tse-green);
+    }
+
     @media (max-width: 720px){
       #tse_hq_panel{
         width:96vw;
@@ -466,6 +484,7 @@
       ok: false,
       user: null,
       companies: [],
+      companyKeys: [],
       trains: [],
       serverTime: null,
       hofResults: []
@@ -699,7 +718,7 @@
       const auth = await ensureAuth();
 
       if (!auth.ok) {
-        state = { ok: false, user: null, companies: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
+        state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
         toast(auth.error, false);
         return;
       }
@@ -710,7 +729,7 @@
 
       if (!res.json || res.status >= 400) {
         if (res.status === 401) GM_deleteValue(K_TOKEN);
-        state = { ok: false, user: null, companies: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
+        state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
         toast(res.json?.error || res.json?.details || `State failed (${res.status})`, false);
         return;
       }
@@ -718,6 +737,7 @@
       state.ok = !!res.json.ok;
       state.user = res.json.user || null;
       state.companies = Array.isArray(res.json.companies) ? res.json.companies : [];
+      state.companyKeys = Array.isArray(res.json.company_keys) ? res.json.company_keys : [];
       state.trains = Array.isArray(res.json.trains) ? res.json.trains : [];
       state.serverTime = res.json.server_time || null;
 
@@ -749,6 +769,46 @@
 
       if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Save company IDs failed (${res.status})`);
       return res.json;
+    }
+
+    async function getCompanyKeysFromServer() {
+      const base = getBaseUrl();
+      const auth = await ensureAuth();
+      if (!auth.ok) throw new Error(auth.error);
+
+      const res = await http("GET", `${base}/company-keys`, {
+        headers: { "X-Session-Token": auth.token }
+      });
+
+      if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Load company keys failed (${res.status})`);
+      return Array.isArray(res.json.items) ? res.json.items : [];
+    }
+
+    async function saveCompanyKeyToServer(company_id, api_key) {
+      const base = getBaseUrl();
+      const auth = await ensureAuth();
+      if (!auth.ok) throw new Error(auth.error);
+
+      const res = await http("POST", `${base}/company-keys`, {
+        headers: { "Content-Type": "application/json", "X-Session-Token": auth.token },
+        data: JSON.stringify({ company_id, api_key })
+      });
+
+      if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Save company key failed (${res.status})`);
+      return Array.isArray(res.json.items) ? res.json.items : [];
+    }
+
+    async function deleteCompanyKeyFromServer(company_id) {
+      const base = getBaseUrl();
+      const auth = await ensureAuth();
+      if (!auth.ok) throw new Error(auth.error);
+
+      const res = await http("DELETE", `${base}/company-keys/${encodeURIComponent(company_id)}`, {
+        headers: { "X-Session-Token": auth.token }
+      });
+
+      if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Delete company key failed (${res.status})`);
+      return Array.isArray(res.json.items) ? res.json.items : [];
     }
 
     async function addTrain(payload) {
@@ -794,6 +854,9 @@
 
     function renderCompanies() {
       const companies = state.companies || [];
+      const keyMap = {};
+      for (const item of state.companyKeys || []) keyMap[String(item.company_id)] = item;
+
       bodyEl.innerHTML = `
         <div class="tse_card">
           <div class="tse_row">
@@ -829,6 +892,10 @@
                   }, { manual: 0, intelligence: 0, endurance: 0 });
 
                   const overall = totals.manual + totals.intelligence + totals.endurance;
+                  const k = keyMap[String(c.id)];
+                  const keyStatus = k && k.has_key
+                    ? `<div class="tse_key_status ok"><span class="dot"></span>Company key saved • ${esc(k.masked_key || "")}</div>`
+                    : `<div class="tse_key_status"><span class="dot"></span>No company key saved</div>`;
 
                   return `
                     <div class="tse_item">
@@ -836,6 +903,7 @@
                         <div style="min-width:0;">
                           <div class="name">${esc(c.name || `Company #${c.id}`)}</div>
                           <div class="meta">ID: ${esc(c.id)}${c.director ? ` • Director: ${esc(c.director)}` : ""}</div>
+                          ${keyStatus}
                         </div>
                         <div class="actions">
                           <button class="tse_btn" data-open-company="${esc(c.id)}">Open</button>
@@ -1061,9 +1129,10 @@
       bodyEl.querySelector("#tse_hof_run").addEventListener("click", async () => {
         try {
           msg.innerHTML = `<span class="tse_small">Searching…</span>`;
+          const maxVal = parseInt(bodyEl.querySelector("#tse_hof_max_total").value || "0", 10);
           const payload = {
             min_total: parseInt(bodyEl.querySelector("#tse_hof_min_total").value || "0", 10),
-            max_total: parseInt(bodyEl.querySelector("#tse_hof_max_total").value || "0", 10),
+            max_total: maxVal > 0 ? maxVal : 999999999,
             min_man: parseInt(bodyEl.querySelector("#tse_hof_min_man").value || "0", 10),
             min_int: parseInt(bodyEl.querySelector("#tse_hof_min_int").value || "0", 10),
             min_end: parseInt(bodyEl.querySelector("#tse_hof_min_end").value || "0", 10),
@@ -1130,86 +1199,102 @@
     }
 
     function renderKeys() {
-      const companies = state.companies || [];
-      const map = gmJsonGet(K_KEYS, {}) || {};
+      const companyIds = Array.isArray(state.user?.company_ids) ? state.user.company_ids.map(String) : [];
+      const companies = Array.isArray(state.companies) ? state.companies : [];
+      const keyMap = {};
+      for (const item of state.companyKeys || []) keyMap[String(item.company_id)] = item;
+      const companyNameMap = {};
+      for (const c of companies) companyNameMap[String(c.id)] = c.name || `Company #${c.id}`;
 
       bodyEl.innerHTML = `
         <div class="tse_card">
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company Keys</div>
-              <div class="tse_small">Local only. These do not go to the server.</div>
+              <div class="tse_small">These save on your server, link to saved company IDs, and only show masked after save.</div>
             </div>
-          </div>
-          <div class="tse_row" style="margin-top:10px;">
-            <button class="tse_btn gold" id="tse_keys_save">Save</button>
-            <button class="tse_btn red" id="tse_keys_clear">Clear All</button>
-            <div class="tse_small" id="tse_keys_msg"></div>
           </div>
         </div>
 
         <div class="tse_list">
           ${
-            companies.length
-              ? companies.map(c => {
-                  const entry = map[String(c.id)] || {};
+            companyIds.length
+              ? companyIds.map(cid => {
+                  const entry = keyMap[String(cid)];
+                  const cname = companyNameMap[String(cid)] || `Company #${cid}`;
+                  const hasKey = !!(entry && entry.has_key);
                   return `
                     <div class="tse_item">
                       <div class="top">
                         <div style="min-width:0;">
-                          <div class="name">${esc(c.name || `Company #${c.id}`)}</div>
-                          <div class="meta">ID: ${esc(c.id)}</div>
+                          <div class="name">${esc(cname)}</div>
+                          <div class="meta">ID: ${esc(cid)}</div>
+                          <div class="tse_small" style="margin-top:6px;">
+                            ${hasKey ? `Saved key: <b>${esc(entry.masked_key || "")}</b>` : `No key saved yet.`}
+                          </div>
+                        </div>
+                        <div class="actions">
+                          ${hasKey ? `<button class="tse_btn red" data-del-company-key="${esc(cid)}">Delete</button>` : ``}
                         </div>
                       </div>
+
                       <div class="tse_row" style="margin-top:10px;">
-                        <div class="tse_field">
-                          <div class="tse_label">Company Key</div>
-                          <input class="tse_input" data-key-id="${esc(c.id)}" value="${esc(entry.key || "")}" placeholder="Paste company key">
+                        <div class="tse_field" style="flex:1 1 100%;">
+                          <div class="tse_label">API Key</div>
+                          <input class="tse_input" type="password" data-company-key-input="${esc(cid)}" placeholder="${hasKey ? "Enter new key to replace existing one" : "Paste company API key"}" autocomplete="new-password">
                         </div>
-                        <div class="tse_field">
-                          <div class="tse_label">Note</div>
-                          <input class="tse_input" data-note-id="${esc(c.id)}" value="${esc(entry.note || "")}" placeholder="Optional note">
-                        </div>
+                      </div>
+
+                      <div class="tse_row" style="margin-top:10px;">
+                        <button class="tse_btn gold" data-save-company-key="${esc(cid)}">${hasKey ? "Replace Key" : "Save Key"}</button>
+                        <div class="tse_small" data-company-key-msg="${esc(cid)}"></div>
                       </div>
                     </div>
                   `;
                 }).join("")
-              : `<div class="tse_card"><div class="tse_small">No companies loaded yet.</div></div>`
+              : `<div class="tse_card"><div class="tse_small">No company IDs saved yet. Save company IDs first in Settings.</div></div>`
           }
         </div>
       `;
 
-      const msg = bodyEl.querySelector("#tse_keys_msg");
+      bodyEl.querySelectorAll("[data-save-company-key]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const cid = btn.getAttribute("data-save-company-key");
+          const input = bodyEl.querySelector(`[data-company-key-input="${cid}"]`);
+          const msg = bodyEl.querySelector(`[data-company-key-msg="${cid}"]`);
+          const api_key = String(input?.value || "").trim();
 
-      const save = () => {
-        const out = {};
-        bodyEl.querySelectorAll("[data-key-id]").forEach(el => {
-          const id = el.getAttribute("data-key-id");
-          out[id] = out[id] || {};
-          out[id].key = el.value || "";
-        });
-        bodyEl.querySelectorAll("[data-note-id]").forEach(el => {
-          const id = el.getAttribute("data-note-id");
-          out[id] = out[id] || {};
-          out[id].note = el.value || "";
-        });
-        gmJsonSet(K_KEYS, out);
-        msg.innerHTML = `<span class="tse_ok">Saved</span>`;
-        toast("Company keys saved", true);
-      };
+          if (!cid) return;
+          if (!api_key) {
+            if (msg) msg.innerHTML = `<span class="tse_err">Enter a key first</span>`;
+            return;
+          }
 
-      bodyEl.querySelector("#tse_keys_save").addEventListener("click", save);
-      bodyEl.querySelector("#tse_keys_clear").addEventListener("click", () => {
-        gmJsonSet(K_KEYS, {});
-        renderKeys();
-        toast("Company keys cleared", true);
+          try {
+            if (msg) msg.innerHTML = `<span class="tse_small">Saving…</span>`;
+            state.companyKeys = await saveCompanyKeyToServer(cid, api_key);
+            if (input) input.value = "";
+            renderKeys();
+            toast(`Company key saved for ${cid}`, true);
+          } catch (e) {
+            if (msg) msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
+            toast(e?.message || String(e), false);
+          }
+        });
       });
 
-      let t = null;
-      bodyEl.querySelectorAll("[data-key-id],[data-note-id]").forEach(el => {
-        el.addEventListener("input", () => {
-          clearTimeout(t);
-          t = setTimeout(save, 800);
+      bodyEl.querySelectorAll("[data-del-company-key]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const cid = btn.getAttribute("data-del-company-key");
+          if (!cid) return;
+
+          try {
+            state.companyKeys = await deleteCompanyKeyFromServer(cid);
+            renderKeys();
+            toast(`Company key deleted for ${cid}`, true);
+          } catch (e) {
+            toast(e?.message || String(e), false);
+          }
         });
       });
     }
@@ -1255,7 +1340,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company IDs</div>
-              <div class="tse_small">Save company IDs here to load them into the Companies tab.</div>
+              <div class="tse_small">Save company IDs here first. The Company Keys tab links keys to these IDs.</div>
             </div>
           </div>
           <div class="tse_row" style="margin-top:10px;">
@@ -1301,7 +1386,7 @@
 
       bodyEl.querySelector("#tse_set_logout").addEventListener("click", () => {
         GM_deleteValue(K_TOKEN);
-        state = { ok: false, user: null, companies: [], trains: [], serverTime: null, hofResults: [] };
+        state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: [] };
         msg.innerHTML = `<span class="tse_ok">Logged out</span>`;
         toast("Logged out", true);
       });
