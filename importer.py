@@ -7,6 +7,7 @@ from db import upsert_hof_worker
 
 def _normalize_status(raw_status: str, company_name: str = "") -> str:
     s = str(raw_status or "").strip().lower()
+
     if s in {"none", "no company", "unemployed"}:
         return "none"
     if s in {"company", "working", "employed"}:
@@ -43,7 +44,12 @@ def import_hof_workers_from_payload(payload: Any) -> int:
     imported = 0
 
     for row in rows:
-        player_id = str(row.get("id") or row.get("player_id") or row.get("torn_id") or "").strip()
+        player_id = str(
+            row.get("id")
+            or row.get("player_id")
+            or row.get("torn_id")
+            or ""
+        ).strip()
         if not player_id:
             continue
 
