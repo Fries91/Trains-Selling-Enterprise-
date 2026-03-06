@@ -21,6 +21,9 @@ from db import (
     list_hof_workers,
     upsert_hof_worker,
     hof_count,
+    save_company_key,
+    list_company_keys,
+    delete_company_key,
 )
 from torn_api import me_basic, company_profile, normalize_company
 from importer import import_hof_workers_from_json_file
@@ -140,6 +143,7 @@ def home():
             "/api/auth",
             "/state",
             "/company_ids",
+            "/company-keys",
             "/trains",
             "/hof/search",
             "/hof/import",
@@ -249,6 +253,76 @@ def company_ids():
     return ok({"saved": True, "company_ids": cleaned, "server_time": utc_now()})
 
 
+@app.route("/company-keys", methods=["GET", "POST", "OPTIONS"])
+def company_keys():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    session = require_session()
+    if not session:
+        return fail("Missing/invalid session token", 401)
+
+    user = get_user(session["user_id"])
+    if not user:
+        return fail("User not found", 404)
+
+    if request.method == "GET":
+        return ok({
+            "items": list_company_keys(session["user_id"]),
+            "server_time": utc_now(),
+        })
+
+    try:
+        body = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return fail("Bad JSON", 400)
+
+    company_id = str(body.get("company_id") or "").strip()
+    api_key = str(body.get("api_key") or "").strip()
+
+    if not company_id or not company_id.isdigit():
+        return fail("Valid company_id required", 400)
+
+    if not api_key:
+        return fail("api_key required", 400)
+
+    user_company_ids = [str(x).strip() for x in (user.get("company_ids") or []) if str(x).strip()]
+    if company_id not in user_company_ids:
+        return fail("Company ID must be saved in Settings first", 400)
+
+    save_company_key(session["user_id"], company_id, api_key)
+    return ok({
+        "saved": True,
+        "company_id": company_id,
+        "items": list_company_keys(session["user_id"]),
+        "server_time": utc_now(),
+    })
+
+
+@app.route("/company-keys/<company_id>", methods=["DELETE", "OPTIONS"])
+def company_keys_delete(company_id: str):
+    if request.method == "OPTIONS":
+        return ok({})
+
+    session = require_session()
+    if not session:
+        return fail("Missing/invalid session token", 401)
+
+    company_id = str(company_id or "").strip()
+    if not company_id:
+        return fail("Missing company id", 400)
+
+    deleted = delete_company_key(session["user_id"], company_id)
+    if not deleted:
+        return fail("Company key not found", 404)
+
+    return ok({
+        "deleted": True,
+        "items": list_company_keys(session["user_id"]),
+        "server_time": utc_now(),
+    })
+
+
 @app.route("/state", methods=["GET", "OPTIONS"])
 def state():
     if request.method == "OPTIONS":
@@ -273,7 +347,7 @@ def state():
             companies.append({"id": str(cid), "name": f"Company #{cid}", "director": "", "employees": []})
 
     trains = list_trains(user["user_id"])
-    name_map = {c["id"]: c.get("name") for c in companies}
+    name_map = {str(c["id"]): c.get("name") for c in companies}
 
     for t in trains:
         cid = str(t.get("company_id") or "")
@@ -281,8 +355,13 @@ def state():
             t["company_name"] = name_map[cid]
 
     return ok({
-        "user": {"id": user["user_id"], "name": user.get("name", "")},
+        "user": {
+            "id": user["user_id"],
+            "name": user.get("name", ""),
+            "company_ids": company_ids,
+        },
         "companies": companies,
+        "company_keys": list_company_keys(user["user_id"]),
         "trains": trains,
         "server_time": utc_now(),
     })
@@ -361,6 +440,9 @@ def hof_search():
 
     min_total = as_int(body.get("min_total"), 0)
     max_total = as_int(body.get("max_total"), 10**12)
+    if max_total <= 0:
+        max_total = 10**12
+
     min_man = as_int(body.get("min_man"), 0)
     min_int = as_int(body.get("min_int"), 0)
     min_end = as_int(body.get("min_end"), 0)
@@ -386,7 +468,8 @@ def hof_search():
         results.append(row)
 
     results.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
-    return ok({"results": results[:limit], "count": len(results[:limit]), "server_time": utc_now()})
+    sliced = results[:limit]
+    return ok({"results": sliced, "count": len(sliced), "server_time": utc_now()})
 
 
 @app.route("/hof/import", methods=["POST", "OPTIONS"])
