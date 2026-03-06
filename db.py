@@ -242,3 +242,12 @@ def list_hof_workers() -> List[Dict[str, Any]]:
     rows = cur.fetchall()
     con.close()
     return [dict(r) for r in rows]
+
+
+def hof_count() -> int:
+    con = _con()
+    cur = con.cursor()
+    cur.execute("SELECT COUNT(*) AS c FROM hof_workers")
+    row = cur.fetchone()
+    con.close()
+    return int(row["c"] if row else 0)
