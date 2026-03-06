@@ -1,0 +1,22 @@
+{
+  "rows": [
+    {
+      "id": "123456",
+      "name": "Example Player",
+      "manual_labor": 5000,
+      "intelligence": 7000,
+      "endurance": 6000,
+      "job_status": "company",
+      "company_name": "Example Company"
+    },
+    {
+      "id": "234567",
+      "name": "Another Player",
+      "manual_labor": 2000,
+      "intelligence": 2500,
+      "endurance": 2100,
+      "job_status": "none",
+      "company_name": ""
+    }
+  ]
+}
