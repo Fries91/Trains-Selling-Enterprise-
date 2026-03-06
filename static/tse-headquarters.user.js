@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         T.S.E Headquarters 🏢
+// @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.2.1
-// @description  T.S.E Headquarters hub overlay. Companies, trains, HoF search, notes, company keys, settings.
+// @version      8.3.0
+// @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
@@ -22,10 +22,10 @@
   if (window.__TSE_HQ_LOADED__) return;
   window.__TSE_HQ_LOADED__ = true;
 
-  const OLD_BADGE = document.getElementById("tse_hq_badge");
-  const OLD_PANEL = document.getElementById("tse_hq_panel");
-  if (OLD_BADGE) OLD_BADGE.remove();
-  if (OLD_PANEL) OLD_PANEL.remove();
+  const oldBadge = document.getElementById("tse_hq_badge");
+  const oldPanel = document.getElementById("tse_hq_panel");
+  if (oldBadge) oldBadge.remove();
+  if (oldPanel) oldPanel.remove();
 
   const DEFAULT_BASE_URL = "https://trains-selling-enterprise.onrender.com";
 
@@ -41,8 +41,8 @@
   const uiDefault = {
     open: false,
     tab: "companies",
-    badge: { x: 18, y: 180 },
-    panel: { x: 86, y: 120 },
+    badge: { x: 14, y: 165 },
+    panel: { x: 10, y: 72 }
   };
 
   function clone(obj) {
@@ -156,10 +156,10 @@
     #tse_hq_badge{
       position:fixed;
       z-index:2147483647;
-      left:18px;
-      top:180px;
-      width:44px;
-      height:44px;
+      left:14px;
+      top:165px;
+      width:46px;
+      height:46px;
       border-radius:14px;
       background:
         radial-gradient(120% 120% at 25% 12%, rgba(242,212,135,.38), rgba(214,179,90,.16) 40%, rgba(15,27,51,.96) 75%),
@@ -173,14 +173,14 @@
       user-select:none;
       -webkit-user-select:none;
       touch-action:none;
+      -webkit-touch-callout:none;
       backdrop-filter:blur(6px);
-      font-size:21px;
+      font-size:25px;
       line-height:1;
     }
-    #tse_hq_badge:active{ transform:scale(.98); }
     #tse_hq_badge .emoji{
       pointer-events:none;
-      transform:translateY(-.5px);
+      transform:translateY(-1px);
       filter:drop-shadow(0 2px 6px rgba(0,0,0,.45));
     }
     #tse_hq_badge .dot{
@@ -200,15 +200,16 @@
     #tse_hq_panel{
       position:fixed;
       z-index:2147483646;
-      left:74px;
-      top:120px;
-      width:min(620px, calc(100vw - 86px));
-      max-height:min(80vh, 700px);
+      left:10px;
+      top:72px;
+      width:min(96vw, 560px);
+      max-width:96vw;
+      max-height:82vh;
       background:
         radial-gradient(120% 140% at 20% 0%, rgba(214,179,90,.10), rgba(11,18,32,.96) 60%),
         linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
       border:1px solid rgba(214,179,90,.24);
-      border-radius:var(--tse-radius2);
+      border-radius:16px;
       box-shadow:var(--tse-shadow);
       overflow:hidden;
       display:none;
@@ -219,9 +220,9 @@
 
     #tse_hq_header{
       display:flex;
-      gap:10px;
+      gap:8px;
       align-items:center;
-      padding:12px;
+      padding:10px;
       border-bottom:1px solid var(--tse-line);
       background:linear-gradient(180deg, rgba(214,179,90,.12), rgba(0,0,0,0));
       cursor:move;
@@ -229,12 +230,27 @@
       touch-action:none;
     }
 
-    #tse_hq_title{ display:flex; flex-direction:column; gap:2px; min-width:0; line-height:1.1; }
+    #tse_hq_title{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width:0;
+      line-height:1.1;
+    }
     #tse_hq_title .main{
-      font-weight:900; font-size:15px; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      font-weight:900;
+      font-size:14px;
+      letter-spacing:.2px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
     #tse_hq_title .sub{
-      font-size:11px; color:var(--tse-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      font-size:10px;
+      color:var(--tse-muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
 
     #tse_hq_header .spacer{ flex:1; }
@@ -243,22 +259,21 @@
       border:1px solid rgba(255,255,255,.12);
       background:rgba(15,27,51,.65);
       color:var(--tse-text);
-      padding:7px 10px;
-      border-radius:12px;
+      padding:6px 9px;
+      border-radius:10px;
       cursor:pointer;
       font-weight:800;
-      font-size:12px;
+      font-size:11px;
       user-select:none;
+      flex:0 0 auto;
     }
-    .tse_btn:hover{ border-color:rgba(214,179,90,.28); }
     .tse_btn.red{ border-color:rgba(255,89,104,.35); }
     .tse_btn.gold{ border-color:rgba(214,179,90,.35); }
-    .tse_btn:active{ transform:translateY(1px); }
 
     #tse_hq_tabs{
       display:flex;
-      gap:8px;
-      padding:10px 12px;
+      gap:6px;
+      padding:8px 10px;
       border-bottom:1px solid var(--tse-line);
       overflow:auto;
       -webkit-overflow-scrolling:touch;
@@ -266,12 +281,12 @@
     }
     .tse_tab{
       flex:0 0 auto;
-      padding:8px 10px;
+      padding:7px 9px;
       border-radius:999px;
       border:1px solid rgba(255,255,255,.12);
       background:rgba(15,27,51,.55);
       font-weight:900;
-      font-size:12px;
+      font-size:11px;
       cursor:pointer;
       user-select:none;
       color:var(--tse-muted);
@@ -284,34 +299,51 @@
     }
 
     #tse_hq_body{
-      padding:12px;
+      padding:10px;
       overflow:auto;
-      max-height:calc(min(80vh, 700px) - 114px);
+      max-height:calc(82vh - 94px);
+      -webkit-overflow-scrolling:touch;
     }
 
     .tse_card{
       background:rgba(15,27,51,.58);
       border:1px solid rgba(255,255,255,.10);
-      border-radius:var(--tse-radius);
-      padding:12px;
+      border-radius:14px;
+      padding:10px;
       margin-bottom:10px;
     }
-    .tse_row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .tse_field{ display:flex; flex-direction:column; gap:6px; flex:1 1 160px; min-width:160px; }
-    .tse_label{ font-size:11px; color:var(--tse-muted); font-weight:900; letter-spacing:.2px; }
+    .tse_row{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .tse_field{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      flex:1 1 140px;
+      min-width:140px;
+    }
+    .tse_label{
+      font-size:10px;
+      color:var(--tse-muted);
+      font-weight:900;
+      letter-spacing:.2px;
+    }
     .tse_input, .tse_select, .tse_textarea{
       width:100%;
-      border-radius:12px;
+      border-radius:10px;
       border:1px solid rgba(255,255,255,.12);
       background:rgba(11,18,32,.78);
       color:var(--tse-text);
-      padding:10px;
-      font-size:13px;
+      padding:9px;
+      font-size:12px;
       outline:none;
       box-sizing:border-box;
     }
-    .tse_textarea{ min-height:140px; resize:vertical; }
-    .tse_small{ font-size:12px; color:var(--tse-muted); line-height:1.35; }
+    .tse_textarea{ min-height:120px; resize:vertical; }
+    .tse_small{ font-size:11px; color:var(--tse-muted); line-height:1.35; }
     .tse_ok{ color:var(--tse-green); font-weight:900; }
     .tse_err{ color:var(--tse-red); font-weight:900; }
     .tse_hr{ height:1px; background:var(--tse-line); margin:10px 0; }
@@ -323,32 +355,60 @@
       border-radius:14px;
       padding:10px;
     }
-    .tse_item .top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
-    .tse_item .name{ font-weight:1000; font-size:13px; }
-    .tse_item .meta{ font-size:12px; color:var(--tse-muted); margin-top:2px; }
-    .tse_item .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .tse_item .top{
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+      align-items:flex-start;
+    }
+    .tse_item .name{ font-weight:1000; font-size:12px; }
+    .tse_item .meta{ font-size:11px; color:var(--tse-muted); margin-top:2px; }
+    .tse_item .actions{
+      display:flex;
+      gap:6px;
+      align-items:center;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
 
     .tse_grid_3{
       display:grid;
       grid-template-columns:repeat(3, minmax(0, 1fr));
-      gap:8px;
+      gap:6px;
       margin-top:8px;
     }
     .tse_kpi{
       background:rgba(11,18,32,.70);
       border:1px solid rgba(255,255,255,.10);
-      border-radius:12px;
-      padding:10px;
+      border-radius:10px;
+      padding:8px;
     }
-    .tse_kpi .k{ font-size:11px; color:var(--tse-muted); font-weight:900; }
-    .tse_kpi .v{ font-size:14px; font-weight:1000; margin-top:2px; }
+    .tse_kpi .k{ font-size:10px; color:var(--tse-muted); font-weight:900; }
+    .tse_kpi .v{ font-size:13px; font-weight:1000; margin-top:2px; }
 
     @media (max-width: 720px){
       #tse_hq_panel{
-        width:min(96vw, 620px);
+        width:96vw;
+        max-width:96vw;
         left:2vw !important;
+        top:68px !important;
+        max-height:84vh;
+      }
+      #tse_hq_body{
+        max-height:calc(84vh - 94px);
       }
       .tse_grid_3{ grid-template-columns:1fr; }
+      .tse_field{
+        flex:1 1 100%;
+        min-width:100%;
+      }
+      .tse_item .top{
+        flex-direction:column;
+      }
+      .tse_item .actions{
+        width:100%;
+        justify-content:flex-start;
+      }
     }
   `);
 
@@ -435,30 +495,38 @@
     }
 
     function applyUIPositions() {
-      const bw = 44, bh = 44;
+      const isMobile = window.innerWidth <= 720;
+      const bw = 46, bh = 46;
       const maxX = window.innerWidth - bw - 6;
       const maxY = window.innerHeight - bh - 6;
 
-      ui.badge = ui.badge || { x: 18, y: 180 };
-      ui.panel = ui.panel || { x: 74, y: 120 };
+      ui.badge = ui.badge || { x: 14, y: 165 };
+      ui.panel = ui.panel || { x: 10, y: 72 };
 
-      ui.badge.x = clamp(ui.badge.x ?? 18, 6, Math.max(6, maxX));
-      ui.badge.y = clamp(ui.badge.y ?? 180, 6, Math.max(6, maxY));
+      ui.badge.x = clamp(ui.badge.x ?? 14, 6, Math.max(6, maxX));
+      ui.badge.y = clamp(ui.badge.y ?? 165, 6, Math.max(6, maxY));
 
       badge.style.left = `${ui.badge.x}px`;
       badge.style.top = `${ui.badge.y}px`;
 
-      const r = panel.getBoundingClientRect();
-      const pw = Math.max(320, r.width || Math.min(620, window.innerWidth - 86));
-      const ph = Math.max(240, r.height || Math.min(window.innerHeight * 0.8, 700));
-      const pMaxX = Math.max(6, window.innerWidth - pw - 6);
-      const pMaxY = Math.max(6, window.innerHeight - ph - 6);
+      if (isMobile) {
+        ui.panel.x = 10;
+        ui.panel.y = 68;
+        panel.style.left = `2vw`;
+        panel.style.top = `${ui.panel.y}px`;
+      } else {
+        const r = panel.getBoundingClientRect();
+        const pw = Math.max(320, r.width || Math.min(560, window.innerWidth - 86));
+        const ph = Math.max(240, r.height || Math.min(window.innerHeight * 0.82, 700));
+        const pMaxX = Math.max(6, window.innerWidth - pw - 6);
+        const pMaxY = Math.max(6, window.innerHeight - ph - 6);
 
-      ui.panel.x = clamp(ui.panel.x ?? (ui.badge.x + 56), 6, pMaxX);
-      ui.panel.y = clamp(ui.panel.y ?? (ui.badge.y - 30), 6, pMaxY);
+        ui.panel.x = clamp(ui.panel.x ?? (ui.badge.x + 56), 6, pMaxX);
+        ui.panel.y = clamp(ui.panel.y ?? (ui.badge.y - 30), 6, pMaxY);
 
-      panel.style.left = `${ui.panel.x}px`;
-      panel.style.top = `${ui.panel.y}px`;
+        panel.style.left = `${ui.panel.x}px`;
+        panel.style.top = `${ui.panel.y}px`;
+      }
 
       saveUI();
     }
@@ -512,14 +580,15 @@
     }
 
     const badgeDrag = makeDraggable(badge, (x, y) => {
-      ui.badge.x = clamp(x, 6, window.innerWidth - 44 - 6);
-      ui.badge.y = clamp(y, 6, window.innerHeight - 44 - 6);
+      ui.badge.x = clamp(x, 6, window.innerWidth - 46 - 6);
+      ui.badge.y = clamp(y, 6, window.innerHeight - 46 - 6);
       badge.style.left = `${ui.badge.x}px`;
       badge.style.top = `${ui.badge.y}px`;
       saveUI();
     });
 
     makeDraggable(panel.querySelector("#tse_hq_header"), (x, y) => {
+      if (window.innerWidth <= 720) return;
       const r = panel.getBoundingClientRect();
       ui.panel.x = clamp(x, 6, window.innerWidth - r.width - 6);
       ui.panel.y = clamp(y, 6, window.innerHeight - r.height - 6);
@@ -560,6 +629,12 @@
       e.stopPropagation();
       togglePanel();
     }, true);
+
+    badge.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      togglePanel();
+    }, { passive: false, capture: true });
 
     panel.querySelector("#tse_hq_close").addEventListener("click", (e) => {
       e.preventDefault();
@@ -724,7 +799,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company dashboard</div>
-              <div class="tse_small">Set company IDs in Settings if this is empty. Each company shows employee totals and quick profile open.</div>
+              <div class="tse_small">Set company IDs in Settings if this is empty.</div>
             </div>
           </div>
         </div>
