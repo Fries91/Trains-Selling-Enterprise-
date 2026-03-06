@@ -12,8 +12,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @connect      trains-selling-enterprise.onrender.com
-// @downloadURL  https://raw.githubusercontent.com/Fries91/Trains-Selling-Enterprise-/main/tse-headquarters.user.js
-// @updateURL    https://raw.githubusercontent.com/Fries91/Trains-Selling-Enterprise-/main/tse-headquarters.user.js
+// @downloadURL  https://raw.githubusercontent.com/Fries91/Trains-Selling-Enterprise-/main/static/tse-headquarters.user.js
+// @updateURL    https://raw.githubusercontent.com/Fries91/Trains-Selling-Enterprise-/main/static/tse-headquarters.user.js
 // ==/UserScript==
 
 (function () {
