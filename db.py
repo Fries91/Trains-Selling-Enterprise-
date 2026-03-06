@@ -75,6 +75,19 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS company_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            api_key TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, company_id)
+        )
+    """)
+
     con.commit()
     con.close()
 
@@ -251,3 +264,89 @@ def hof_count() -> int:
     row = cur.fetchone()
     con.close()
     return int(row["c"] if row else 0)
+
+
+def save_company_key(user_id: str, company_id: str, api_key: str, note: str = ""):
+    now = _utc_now()
+    con = _con()
+    cur = con.cursor()
+    cur.execute("""
+        INSERT INTO company_keys (user_id, company_id, api_key, note, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, company_id) DO UPDATE SET
+            api_key=excluded.api_key,
+            note=excluded.note,
+            updated_at=excluded.updated_at
+    """, (
+        str(user_id),
+        str(company_id).strip(),
+        str(api_key or "").strip(),
+        str(note or "").strip(),
+        now,
+        now
+    ))
+    con.commit()
+    con.close()
+
+
+def delete_company_key(user_id: str, company_id: str) -> bool:
+    con = _con()
+    cur = con.cursor()
+    cur.execute(
+        "DELETE FROM company_keys WHERE user_id=? AND company_id=?",
+        (str(user_id), str(company_id).strip())
+    )
+    con.commit()
+    ok = cur.rowcount > 0
+    con.close()
+    return ok
+
+
+def get_company_key(user_id: str, company_id: str) -> Optional[Dict[str, Any]]:
+    con = _con()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT company_id, api_key, note, created_at, updated_at
+        FROM company_keys
+        WHERE user_id=? AND company_id=?
+        LIMIT 1
+    """, (str(user_id), str(company_id).strip()))
+    row = cur.fetchone()
+    con.close()
+    if not row:
+        return None
+    return dict(row)
+
+
+def list_company_keys(user_id: str) -> List[Dict[str, Any]]:
+    con = _con()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT company_id, api_key, note, created_at, updated_at
+        FROM company_keys
+        WHERE user_id=?
+        ORDER BY company_id ASC
+    """, (str(user_id),))
+    rows = cur.fetchall()
+    con.close()
+
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        raw = str(d.get("api_key") or "").strip()
+        masked = ""
+        if raw:
+            if len(raw) <= 4:
+                masked = "*" * len(raw)
+            else:
+                masked = ("*" * (len(raw) - 4)) + raw[-4:]
+
+        out.append({
+            "company_id": str(d.get("company_id") or ""),
+            "masked_key": masked,
+            "has_key": bool(raw),
+            "note": str(d.get("note") or ""),
+            "created_at": d.get("created_at"),
+            "updated_at": d.get("updated_at"),
+        })
+    return out
