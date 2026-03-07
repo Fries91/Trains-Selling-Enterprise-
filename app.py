@@ -126,25 +126,29 @@ def import_hof_workers_from_payload_local(payload: Any) -> int:
 
 
 def _clean_company_ids(values: List[Any]) -> List[str]:
-    cleaned: List[str] = []
+    out: List[str] = []
     for x in values or []:
         s = str(x).strip()
         if not s or not s.isdigit():
             continue
-        if s not in cleaned:
-            cleaned.append(s)
-    return cleaned
+        if s not in out:
+            out.append(s)
+    return out
 
 
-def _ensure_user_has_company_id(user_id: str, company_id: str):
+def _append_company_id(user_id: str, company_id: str) -> List[str]:
     user = get_user(user_id)
     if not user:
-        return
+        return []
 
-    company_ids = _clean_company_ids(user.get("company_ids") or [])
-    if company_id not in company_ids:
-        company_ids.append(company_id)
-        set_company_ids(user_id, company_ids)
+    ids = _clean_company_ids(user.get("company_ids") or [])
+    company_id = str(company_id).strip()
+
+    if company_id and company_id not in ids:
+        ids.append(company_id)
+        set_company_ids(user_id, ids)
+
+    return ids
 
 
 @app.after_request
@@ -304,19 +308,18 @@ def company_keys():
 
     try:
         raw = company_profile(api_key, company_id)
-        normalized = normalize_company(company_id, raw)
+        company = normalize_company(company_id, raw)
     except Exception as e:
         return fail("Company API key validation failed", 401, str(e))
 
-    # Auto-keep this company on the user after a successful company-key save.
-    _ensure_user_has_company_id(session["user_id"], company_id)
-
     save_company_key(session["user_id"], company_id, api_key)
+    updated_ids = _append_company_id(session["user_id"], company_id)
 
     return ok({
         "saved": True,
         "company_id": company_id,
-        "company": normalized,
+        "company_ids": updated_ids,
+        "company": company,
         "items": list_company_keys(session["user_id"]),
         "server_time": utc_now(),
     })
@@ -360,8 +363,8 @@ def state():
         return fail("User not found", 404)
 
     company_ids = _clean_company_ids(user.get("company_ids") or [])
-
     companies: List[Dict[str, Any]] = []
+
     for cid in company_ids[:25]:
         company_key_row = get_company_key(user["user_id"], cid)
         api_key_to_use = (
