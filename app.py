@@ -621,3 +621,109 @@ const result = document.getElementById("result");
 function show(obj, isError=false){
   result.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
   result.className = isError ? "err" : "ok";
+}
+
+async function postJson(url, body, secret){
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Importer-Secret": secret
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  if (!res.ok) throw new Error((json && (json.error || json.details)) || text || ("HTTP " + res.status));
+  return json;
+}
+
+document.getElementById("uploadJson").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  const raw = document.getElementById("json").value.trim();
+  if (!secret) return show("Missing importer secret", true);
+  if (!raw) return show("Paste some JSON first", true);
+
+  try {
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed) ? parsed : (parsed.rows || parsed.results || parsed.players || parsed.workers || parsed.data || []);
+    const json = await postJson("/hof/upsert", { rows }, secret);
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+
+document.getElementById("uploadFile").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  const file = document.getElementById("file").files[0];
+  if (!secret) return show("Missing importer secret", true);
+  if (!file) return show("Choose a JSON file first", true);
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const rows = Array.isArray(parsed) ? parsed : (parsed.rows || parsed.results || parsed.players || parsed.workers || parsed.data || []);
+    const json = await postJson("/hof/upsert", { rows }, secret);
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+
+document.getElementById("serverImport").onclick = async () => {
+  const secret = document.getElementById("secret").value.trim();
+  if (!secret) return show("Missing importer secret", true);
+
+  try {
+    const res = await fetch("/hof/import", {
+      method: "POST",
+      headers: { "X-Importer-Secret": secret }
+    });
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    if (!res.ok) throw new Error((json && (json.error || json.details)) || text || ("HTTP " + res.status));
+    show(json);
+  } catch (e) {
+    show(e.message || String(e), true);
+  }
+};
+</script>
+</body>
+</html>
+"""
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/hof/upload-json", methods=["POST", "OPTIONS"])
+def hof_upload_json():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    header_secret = (request.headers.get("X-Importer-Secret") or request.form.get("secret") or "").strip()
+    if not check_importer_secret(header_secret):
+        return fail("Invalid importer secret", 401)
+
+    if "file" not in request.files:
+        return fail("Missing file", 400)
+
+    f = request.files["file"]
+    if not f or not f.filename:
+        return fail("Missing file", 400)
+
+    try:
+        raw = f.read()
+        payload = json.loads(raw.decode("utf-8"))
+        imported = import_hof_workers_from_payload_local(payload)
+        return ok({"imported": imported, "hof_count": hof_count(), "server_time": utc_now()})
+    except Exception as e:
+        return fail("Upload import failed", 500, str(e))
+
+
+init_db()
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)
