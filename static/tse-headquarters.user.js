@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.3
+// @version      8.4.4
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -29,12 +29,12 @@
 
   const DEFAULT_BASE_URL = "https://trains-selling-enterprise.onrender.com";
 
-  const K_ADMIN  = "tse_hq_admin_v1";
-  const K_API    = "tse_hq_api_v1";
-  const K_TOKEN  = "tse_hq_token_v1";
-  const K_USER   = "tse_hq_user_v1";
-  const K_UI     = "tse_hq_ui_v1";
-  const K_NOTES  = "tse_hq_notes_v1";
+  const K_ADMIN = "tse_hq_admin_v1";
+  const K_API = "tse_hq_api_v1";
+  const K_TOKEN = "tse_hq_token_v1";
+  const K_USER = "tse_hq_user_v1";
+  const K_UI = "tse_hq_ui_v1";
+  const K_NOTES = "tse_hq_notes_v1";
 
   const uiDefault = {
     open: false,
@@ -137,7 +137,6 @@
     :root{
       --tse-bg:#0b1220;
       --tse-card:#0f1b33;
-      --tse-card2:#0c172d;
       --tse-text:#eef3ff;
       --tse-muted:#aebddd;
       --tse-line:rgba(255,255,255,.10);
@@ -410,9 +409,7 @@
       background:var(--tse-green);
     }
 
-    .tse_tos{
-      line-height:1.45;
-    }
+    .tse_tos{ line-height:1.45; }
     .tse_tos_grid{
       display:grid;
       grid-template-columns:130px 1fr;
@@ -883,7 +880,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company dashboard</div>
-              <div class="tse_small">Linked company keys should load company data here automatically after save.</div>
+              <div class="tse_small">Save multiple company IDs or company keys. Linked company keys should load real company data here automatically.</div>
             </div>
           </div>
         </div>
@@ -923,7 +920,7 @@
                       <div class="top">
                         <div style="min-width:0;">
                           <div class="name">${esc(c.name || `Company #${c.id}`)}</div>
-                          <div class="meta">ID: ${esc(c.id)}${c.director ? ` • Director: ${esc(c.director)}` : ""}</div>
+                          <div class="meta">ID: ${esc(c.id)}${c.director ? ` • Director: ${esc(c.director)}` : ""}${c.source ? ` • Source: ${esc(c.source)}` : ""}</div>
                           ${keyStatus}
                         </div>
                         <div class="actions">
@@ -1232,7 +1229,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company Keys</div>
-              <div class="tse_small">Save a company key for a company ID. After save, this hub refreshes and the company data should load in the Companies tab.</div>
+              <div class="tse_small">Save one key per company ID. Saving a new company key should keep older company IDs instead of replacing them.</div>
             </div>
           </div>
         </div>
@@ -1274,7 +1271,7 @@
                     </div>
                   `;
                 }).join("")
-              : `<div class="tse_card"><div class="tse_small">No company IDs saved yet. Save company IDs first in Settings, or use a backend that auto-adds them after company-key save.</div></div>`
+              : `<div class="tse_card"><div class="tse_small">No company IDs saved yet. Save company IDs first in Settings. Your updated backend can also keep adding company IDs as you save company keys.</div></div>`
           }
         </div>
       `;
@@ -1367,8 +1364,8 @@
           <div class="tse_row">
             <div class="tse_field narrow">
               <div class="tse_label">Company IDs</div>
-              <textarea class="tse_textarea small" id="tse_company_ids" placeholder="12345, 67890"></textarea>
-              <div class="tse_small">Save company IDs here first. The Company Keys tab links keys to these IDs.</div>
+              <textarea class="tse_textarea small" id="tse_company_ids" placeholder="12345, 67890, 112233"></textarea>
+              <div class="tse_small">You can save multiple company IDs here. The Company Keys tab links keys to these IDs.</div>
             </div>
           </div>
           <div class="tse_row" style="margin-top:10px;">
