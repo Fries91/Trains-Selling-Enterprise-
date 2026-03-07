@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.5
+// @version      8.4.6
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -880,7 +880,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company dashboard</div>
-              <div class="tse_small">All saved company IDs and saved company keys should show here when your backend /state merges them correctly.</div>
+              <div class="tse_small">All saved company IDs and saved company keys should show here when the backend merges them correctly.</div>
             </div>
           </div>
         </div>
@@ -1229,7 +1229,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company Keys</div>
-              <div class="tse_small">Each company key should stay linked to its own company. If more than one key is saved, your backend must merge saved company IDs and company keys in /state.</div>
+              <div class="tse_small">Each company key should stay linked to its own company. Saving a new company key should not remove older companies.</div>
             </div>
           </div>
         </div>
@@ -1365,7 +1365,7 @@
             <div class="tse_field narrow">
               <div class="tse_label">Company IDs</div>
               <textarea class="tse_textarea small" id="tse_company_ids" placeholder="12345, 67890, 112233"></textarea>
-              <div class="tse_small">You can save multiple company IDs here. They should all remain saved.</div>
+              <div class="tse_small">Additive save is enabled here. New IDs will merge with existing saved IDs instead of replacing them.</div>
             </div>
           </div>
           <div class="tse_row" style="margin-top:10px;">
@@ -1453,10 +1453,23 @@
 
       bodyEl.querySelector("#tse_cids_save").addEventListener("click", async () => {
         try {
-          const ids = parseCompanyIds(area.value);
-          await saveCompanyIdsToServer(ids);
+          const existingIds = await getCompanyIdsFromServer();
+          const newIds = parseCompanyIds(area.value);
+
+          const merged = [];
+          for (const id of existingIds) {
+            const s = String(id || "").trim();
+            if (s && !merged.includes(s)) merged.push(s);
+          }
+          for (const id of newIds) {
+            const s = String(id || "").trim();
+            if (s && !merged.includes(s)) merged.push(s);
+          }
+
+          await saveCompanyIdsToServer(merged);
+          area.value = merged.join(", ");
           await fetchState();
-          cmsg.innerHTML = `<span class="tse_ok">Saved ${ids.length} ID(s)</span>`;
+          cmsg.innerHTML = `<span class="tse_ok">Saved ${merged.length} ID(s)</span>`;
           toast("Company IDs saved", true);
         } catch (e) {
           cmsg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
