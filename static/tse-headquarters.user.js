@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.1
+// @version      8.4.2
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -323,6 +323,11 @@
       flex:1 1 140px;
       min-width:140px;
     }
+    .tse_field.narrow{
+      flex:0 1 260px;
+      min-width:220px;
+      max-width:260px;
+    }
     .tse_label{
       font-size:10px;
       color:var(--tse-muted);
@@ -341,6 +346,10 @@
       box-sizing:border-box;
     }
     .tse_textarea{ min-height:120px; resize:vertical; }
+    .tse_textarea.small{
+      min-height:86px;
+      max-height:120px;
+    }
     .tse_small{ font-size:11px; color:var(--tse-muted); line-height:1.35; }
     .tse_ok{ color:var(--tse-green); font-weight:900; }
     .tse_err{ color:var(--tse-red); font-weight:900; }
@@ -403,6 +412,25 @@
       background:var(--tse-green);
     }
 
+    .tse_tos{
+      line-height:1.45;
+    }
+    .tse_tos_grid{
+      display:grid;
+      grid-template-columns:130px 1fr;
+      gap:6px 10px;
+      margin-top:8px;
+    }
+    .tse_tos_k{
+      color:var(--tse-gold2);
+      font-weight:900;
+      font-size:11px;
+    }
+    .tse_tos_v{
+      color:var(--tse-text);
+      font-size:11px;
+    }
+
     @media (max-width: 720px){
       #tse_hq_panel{
         width:96vw;
@@ -415,9 +443,11 @@
         max-height:calc(84vh - 94px);
       }
       .tse_grid_3{ grid-template-columns:1fr; }
-      .tse_field{
+      .tse_field,
+      .tse_field.narrow{
         flex:1 1 100%;
         min-width:100%;
+        max-width:100%;
       }
       .tse_item .top{
         flex-direction:column;
@@ -425,6 +455,10 @@
       .tse_item .actions{
         width:100%;
         justify-content:flex-start;
+      }
+      .tse_tos_grid{
+        grid-template-columns:1fr;
+        gap:3px;
       }
     }
   `);
@@ -768,19 +802,6 @@
 
       if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Save company IDs failed (${res.status})`);
       return res.json;
-    }
-
-    async function getCompanyKeysFromServer() {
-      const base = getBaseUrl();
-      const auth = await ensureAuth();
-      if (!auth.ok) throw new Error(auth.error);
-
-      const res = await http("GET", `${base}/company-keys`, {
-        headers: { "X-Session-Token": auth.token }
-      });
-
-      if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Load company keys failed (${res.status})`);
-      return Array.isArray(res.json.items) ? res.json.items : [];
     }
 
     async function saveCompanyKeyToServer(company_id, api_key) {
@@ -1332,20 +1353,47 @@
 
         <div class="tse_card">
           <div class="tse_row">
-            <div class="tse_field" style="flex:1 1 100%;">
+            <div class="tse_field narrow">
               <div class="tse_label">Company IDs</div>
+              <textarea class="tse_textarea small" id="tse_company_ids" placeholder="12345, 67890"></textarea>
               <div class="tse_small">Save company IDs here first. The Company Keys tab links keys to these IDs.</div>
-            </div>
-          </div>
-          <div class="tse_row" style="margin-top:10px;">
-            <div class="tse_field" style="flex:1 1 100%;">
-              <textarea class="tse_textarea" id="tse_company_ids" placeholder="12345, 67890"></textarea>
             </div>
           </div>
           <div class="tse_row" style="margin-top:10px;">
             <button class="tse_btn gold" id="tse_cids_load">Load From Server</button>
             <button class="tse_btn gold" id="tse_cids_save">Save To Server</button>
             <div class="tse_small" id="tse_cids_msg"></div>
+          </div>
+        </div>
+
+        <div class="tse_card">
+          <div class="tse_row">
+            <div class="tse_field" style="flex:1 1 100%;">
+              <div class="tse_label">Terms of Service</div>
+              <div class="tse_small tse_tos">
+                By using T.S.E Headquarters, you agree that this hub may use the Torn API key you enter to authenticate your account with this service and allow the backend to request Torn data needed for hub features.
+              </div>
+
+              <div class="tse_tos_grid">
+                <div class="tse_tos_k">Data Storage</div>
+                <div class="tse_tos_v">Your entered settings and related service data may be stored locally in the userscript and/or on the connected service as needed for login, saved company IDs, company key mappings, trains, and hub features.</div>
+
+                <div class="tse_tos_k">API Key Use</div>
+                <div class="tse_tos_v">Your Torn API key is used for authentication with this service and to let the backend fetch data required for your hub features. After login, the overlay normally uses a session token for most requests instead of repeatedly sending your Torn API key.</div>
+
+                <div class="tse_tos_k">Company Keys</div>
+                <div class="tse_tos_v">Any company API key entered in the Company Keys tab is sent to the connected service and stored there for company-related features. Only enter keys you are authorized to use.</div>
+
+                <div class="tse_tos_k">Data Sharing</div>
+                <div class="tse_tos_v">This hub is intended to use your data only for the tool’s features and not for public display. Do not use the service unless you trust the service owner and understand your data may be processed remotely by that service.</div>
+
+                <div class="tse_tos_k">Minimum Access</div>
+                <div class="tse_tos_v">Use only the lowest-permission Torn API key needed for the features you want. Do not enter credentials you do not want this service to process.</div>
+
+                <div class="tse_tos_k">Your Choice</div>
+                <div class="tse_tos_v">By saving or logging in, you confirm that you understand how this overlay uses the keys you provide and that you choose to connect your account to this hub.</div>
+              </div>
+            </div>
           </div>
         </div>
       `;
