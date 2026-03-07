@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.2
+// @version      8.4.3
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -146,8 +146,6 @@
       --tse-red:#ff5968;
       --tse-green:#34d57a;
       --tse-shadow:0 18px 60px rgba(0,0,0,.55);
-      --tse-radius:14px;
-      --tse-radius2:18px;
       --tse-font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
     }
 
@@ -707,9 +705,12 @@
         const el = document.createElement("div");
         el.className = "tse_tab" + (activeTab === t.id ? " active" : "");
         el.textContent = t.label;
-        el.addEventListener("click", () => {
+        el.addEventListener("click", async () => {
           activeTab = t.id;
           saveUI();
+          if (activeTab === "companies" || activeTab === "trains" || activeTab === "keys") {
+            try { await fetchState(); } catch {}
+          }
           renderTabs();
           renderBody();
         });
@@ -815,7 +816,7 @@
       });
 
       if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Save company key failed (${res.status})`);
-      return Array.isArray(res.json.items) ? res.json.items : [];
+      return res.json;
     }
 
     async function deleteCompanyKeyFromServer(company_id) {
@@ -828,7 +829,7 @@
       });
 
       if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `Delete company key failed (${res.status})`);
-      return Array.isArray(res.json.items) ? res.json.items : [];
+      return res.json;
     }
 
     async function addTrain(payload) {
@@ -882,7 +883,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company dashboard</div>
-              <div class="tse_small">Set company IDs in Settings if this is empty.</div>
+              <div class="tse_small">Linked company keys should load company data here automatically after save.</div>
             </div>
           </div>
         </div>
@@ -1231,7 +1232,7 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Company Keys</div>
-              <div class="tse_small">These save on your server, link to saved company IDs, and only show masked after save.</div>
+              <div class="tse_small">Save a company key for a company ID. After save, this hub refreshes and the company data should load in the Companies tab.</div>
             </div>
           </div>
         </div>
@@ -1254,6 +1255,7 @@
                           </div>
                         </div>
                         <div class="actions">
+                          <button class="tse_btn" data-open-company-from-key="${esc(cid)}">Open</button>
                           ${hasKey ? `<button class="tse_btn red" data-del-company-key="${esc(cid)}">Delete</button>` : ``}
                         </div>
                       </div>
@@ -1272,10 +1274,18 @@
                     </div>
                   `;
                 }).join("")
-              : `<div class="tse_card"><div class="tse_small">No company IDs saved yet. Save company IDs first in Settings.</div></div>`
+              : `<div class="tse_card"><div class="tse_small">No company IDs saved yet. Save company IDs first in Settings, or use a backend that auto-adds them after company-key save.</div></div>`
           }
         </div>
       `;
+
+      bodyEl.querySelectorAll("[data-open-company-from-key]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-open-company-from-key");
+          if (!id) return;
+          window.open(`https://www.torn.com/companies.php?step=profile&ID=${encodeURIComponent(id)}`, "_blank");
+        });
+      });
 
       bodyEl.querySelectorAll("[data-save-company-key]").forEach(btn => {
         btn.addEventListener("click", async () => {
@@ -1292,8 +1302,9 @@
 
           try {
             if (msg) msg.innerHTML = `<span class="tse_small">Saving…</span>`;
-            state.companyKeys = await saveCompanyKeyToServer(cid, api_key);
+            await saveCompanyKeyToServer(cid, api_key);
             if (input) input.value = "";
+            await fetchState();
             renderKeys();
             toast(`Company key saved for ${cid}`, true);
           } catch (e) {
@@ -1309,7 +1320,8 @@
           if (!cid) return;
 
           try {
-            state.companyKeys = await deleteCompanyKeyFromServer(cid);
+            await deleteCompanyKeyFromServer(cid);
+            await fetchState();
             renderKeys();
             toast(`Company key deleted for ${cid}`, true);
           } catch (e) {
