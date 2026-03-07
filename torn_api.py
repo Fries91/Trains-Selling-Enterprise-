@@ -71,4 +71,4 @@ def normalize_company(company_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
         "name": name,
         "director": director,
         "employees": employees,
-                                           }
+    }
