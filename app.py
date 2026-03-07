@@ -24,6 +24,7 @@ from db import (
     save_company_key,
     list_company_keys,
     delete_company_key,
+    get_company_key,
 )
 from torn_api import me_basic, company_profile, normalize_company
 from importer import import_hof_workers_from_json_file
@@ -124,6 +125,28 @@ def import_hof_workers_from_payload_local(payload: Any) -> int:
     return imported
 
 
+def _clean_company_ids(values: List[Any]) -> List[str]:
+    cleaned: List[str] = []
+    for x in values or []:
+        s = str(x).strip()
+        if not s or not s.isdigit():
+            continue
+        if s not in cleaned:
+            cleaned.append(s)
+    return cleaned
+
+
+def _ensure_user_has_company_id(user_id: str, company_id: str):
+    user = get_user(user_id)
+    if not user:
+        return
+
+    company_ids = _clean_company_ids(user.get("company_ids") or [])
+    if company_id not in company_ids:
+        company_ids.append(company_id)
+        set_company_ids(user_id, company_ids)
+
+
 @app.after_request
 def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -190,8 +213,8 @@ def api_auth():
     except Exception as e:
         return fail("API Key validation failed", 401, str(e))
 
-    user_id = str(me.get("player_id") or me.get("user_id") or "")
-    name = str(me.get("name") or "")
+    user_id = str(me.get("player_id") or me.get("user_id") or "").strip()
+    name = str(me.get("name") or "").strip()
 
     if not user_id:
         return fail("Torn API response missing player_id", 401)
@@ -241,14 +264,7 @@ def company_ids():
     if not isinstance(raw_ids, list):
         return fail("company_ids must be a list", 400)
 
-    cleaned: List[str] = []
-    for x in raw_ids:
-        s = str(x).strip()
-        if not s or not s.isdigit():
-            continue
-        if s not in cleaned:
-            cleaned.append(s)
-
+    cleaned = _clean_company_ids(raw_ids)
     set_company_ids(session["user_id"], cleaned)
     return ok({"saved": True, "company_ids": cleaned, "server_time": utc_now()})
 
@@ -286,14 +302,21 @@ def company_keys():
     if not api_key:
         return fail("api_key required", 400)
 
-    user_company_ids = [str(x).strip() for x in (user.get("company_ids") or []) if str(x).strip()]
-    if company_id not in user_company_ids:
-        return fail("Company ID must be saved in Settings first", 400)
+    try:
+        raw = company_profile(api_key, company_id)
+        normalized = normalize_company(company_id, raw)
+    except Exception as e:
+        return fail("Company API key validation failed", 401, str(e))
+
+    # Auto-keep this company on the user after a successful company-key save.
+    _ensure_user_has_company_id(session["user_id"], company_id)
 
     save_company_key(session["user_id"], company_id, api_key)
+
     return ok({
         "saved": True,
         "company_id": company_id,
+        "company": normalized,
         "items": list_company_keys(session["user_id"]),
         "server_time": utc_now(),
     })
@@ -336,15 +359,29 @@ def state():
     if not user:
         return fail("User not found", 404)
 
-    company_ids = [str(x) for x in (user.get("company_ids") or []) if str(x).strip()]
-    companies: List[Dict[str, Any]] = []
+    company_ids = _clean_company_ids(user.get("company_ids") or [])
 
+    companies: List[Dict[str, Any]] = []
     for cid in company_ids[:25]:
+        company_key_row = get_company_key(user["user_id"], cid)
+        api_key_to_use = (
+            str(company_key_row.get("api_key") or "").strip()
+            if company_key_row else ""
+        ) or str(user.get("api_key") or "").strip()
+
         try:
-            raw = company_profile(user["api_key"], cid)
-            companies.append(normalize_company(cid, raw))
+            raw = company_profile(api_key_to_use, cid)
+            company = normalize_company(cid, raw)
+            company["source"] = "company_key" if company_key_row and company_key_row.get("api_key") else "user_key"
+            companies.append(company)
         except Exception:
-            companies.append({"id": str(cid), "name": f"Company #{cid}", "director": "", "employees": []})
+            companies.append({
+                "id": str(cid),
+                "name": f"Company #{cid}",
+                "director": "",
+                "employees": [],
+                "source": "fallback",
+            })
 
     trains = list_trains(user["user_id"])
     name_map = {str(c["id"]): c.get("name") for c in companies}
