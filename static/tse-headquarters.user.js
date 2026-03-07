@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.0
+// @version      8.4.1
 // @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -29,7 +29,6 @@
 
   const DEFAULT_BASE_URL = "https://trains-selling-enterprise.onrender.com";
 
-  const K_BASE   = "tse_hq_base_v1";
   const K_ADMIN  = "tse_hq_admin_v1";
   const K_API    = "tse_hq_api_v1";
   const K_TOKEN  = "tse_hq_token_v1";
@@ -64,7 +63,7 @@
   }
 
   function getBaseUrl() {
-    return (GM_getValue(K_BASE, DEFAULT_BASE_URL) || DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+    return DEFAULT_BASE_URL;
   }
 
   function esc(s) {
@@ -1300,7 +1299,6 @@
     }
 
     function renderSettings() {
-      const base = getBaseUrl();
       const admin = (GM_getValue(K_ADMIN, "") || "").trim();
       const api = (GM_getValue(K_API, "") || "").trim();
 
@@ -1309,15 +1307,10 @@
           <div class="tse_row">
             <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Connection</div>
-              <div class="tse_small">Use your Render URL, an admin key, and your own Torn API key.</div>
+              <div class="tse_small">Use your admin key and your own Torn API key.</div>
             </div>
           </div>
-          <div class="tse_row" style="margin-top:10px;">
-            <div class="tse_field" style="flex:1 1 100%;">
-              <div class="tse_label">Base URL</div>
-              <input class="tse_input" id="tse_set_base" value="${esc(base)}" placeholder="https://your-service.onrender.com">
-            </div>
-          </div>
+
           <div class="tse_row" style="margin-top:10px;">
             <div class="tse_field">
               <div class="tse_label">Admin Key</div>
@@ -1328,6 +1321,7 @@
               <input class="tse_input" id="tse_set_api" value="${esc(api)}" placeholder="Your API key">
             </div>
           </div>
+
           <div class="tse_row" style="margin-top:10px;">
             <button class="tse_btn gold" id="tse_set_save">Save</button>
             <button class="tse_btn gold" id="tse_set_login">Login</button>
@@ -1361,7 +1355,6 @@
       const area = bodyEl.querySelector("#tse_company_ids");
 
       const saveLocalSettings = () => {
-        GM_setValue(K_BASE, bodyEl.querySelector("#tse_set_base").value.trim().replace(/\/+$/, "") || DEFAULT_BASE_URL);
         GM_setValue(K_ADMIN, bodyEl.querySelector("#tse_set_admin").value.trim());
         GM_setValue(K_API, bodyEl.querySelector("#tse_set_api").value.trim());
         GM_deleteValue(K_TOKEN);
