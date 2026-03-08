@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.5.1
+// @version      8.5.2
 // @description  T.S.E Headquarters recovery build. Restores icon + overlay + live HoF total search.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -45,6 +45,10 @@
       limit: "50"
     };
 
+    let started = false;
+    let observer = null;
+    let remountTimer = null;
+
     function clone(obj) {
       return JSON.parse(JSON.stringify(obj));
     }
@@ -80,10 +84,6 @@
     function num(v, fallback = 0) {
       const n = Number(v);
       return Number.isFinite(n) ? n : fallback;
-    }
-
-    function statTotal(x) {
-      return num(x.manual_labor) + num(x.intelligence) + num(x.endurance);
     }
 
     function shortTime(iso) {
@@ -334,44 +334,101 @@
       }
     `);
 
-    const oldBadge = document.getElementById("tse_hq_badge");
-    const oldPanel = document.getElementById("tse_hq_panel");
-    if (oldBadge) oldBadge.remove();
-    if (oldPanel) oldPanel.remove();
+    function buildBadge() {
+      const old = document.getElementById("tse_hq_badge");
+      if (old) old.remove();
 
-    const badge = document.createElement("div");
-    badge.id = "tse_hq_badge";
-    badge.innerHTML = `<div class="dot"></div><div class="emoji">🏤</div>`;
+      const badge = document.createElement("div");
+      badge.id = "tse_hq_badge";
+      badge.innerHTML = `<div class="dot"></div><div class="emoji">🏤</div>`;
+      return badge;
+    }
 
-    const panel = document.createElement("div");
-    panel.id = "tse_hq_panel";
-    panel.innerHTML = `
-      <div id="tse_hq_header">
-        <div id="tse_hq_title">
-          <div class="main">T.S.E Headquarters</div>
-          <div class="sub">made by Fries91</div>
+    function buildPanel() {
+      const old = document.getElementById("tse_hq_panel");
+      if (old) old.remove();
+
+      const panel = document.createElement("div");
+      panel.id = "tse_hq_panel";
+      panel.innerHTML = `
+        <div id="tse_hq_header">
+          <div id="tse_hq_title">
+            <div class="main">T.S.E Headquarters</div>
+            <div class="sub">made by Fries91</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="tse_btn gold" id="tse_hq_refresh">Refresh</button>
+          <button class="tse_btn red" id="tse_hq_close">Close</button>
         </div>
-        <div class="spacer"></div>
-        <button class="tse_btn gold" id="tse_hq_refresh">Refresh</button>
-        <button class="tse_btn red" id="tse_hq_close">Close</button>
-      </div>
-      <div id="tse_hq_tabs"></div>
-      <div id="tse_hq_body"></div>
-    `;
+        <div id="tse_hq_tabs"></div>
+        <div id="tse_hq_body"></div>
+      `;
+      return panel;
+    }
+
+    let badge = buildBadge();
+    let panel = buildPanel();
+
+    function ensureMounted() {
+      if (!document.body) return false;
+
+      if (!document.getElementById("tse_hq_badge")) {
+        badge = buildBadge();
+        document.body.appendChild(badge);
+        started = false;
+      }
+
+      if (!document.getElementById("tse_hq_panel")) {
+        panel = buildPanel();
+        document.body.appendChild(panel);
+        started = false;
+      }
+
+      if (!started) {
+        start();
+      }
+
+      return true;
+    }
+
+    function scheduleEnsureMounted() {
+      clearTimeout(remountTimer);
+      remountTimer = setTimeout(() => {
+        try { ensureMounted(); } catch {}
+      }, 150);
+    }
 
     function safeMount() {
       if (!document.body) {
         setTimeout(safeMount, 300);
         return;
       }
-      if (!document.getElementById("tse_hq_badge")) document.body.appendChild(badge);
-      if (!document.getElementById("tse_hq_panel")) document.body.appendChild(panel);
-      start();
+
+      ensureMounted();
+
+      if (!observer) {
+        observer = new MutationObserver(() => {
+          if (!document.getElementById("tse_hq_badge") || !document.getElementById("tse_hq_panel")) {
+            scheduleEnsureMounted();
+          }
+        });
+        observer.observe(document.documentElement || document.body, {
+          childList: true,
+          subtree: true
+        });
+      }
+
+      setInterval(() => {
+        try { ensureMounted(); } catch {}
+      }, 3000);
     }
 
     function start() {
       const tabsEl = panel.querySelector("#tse_hq_tabs");
       const bodyEl = panel.querySelector("#tse_hq_body");
+      if (!tabsEl || !bodyEl) return;
+
+      started = true;
 
       const TABS = [
         { id: "companies", label: "Companies" },
@@ -407,6 +464,7 @@
 
       function setStatusLine(msg, ok = true) {
         const sub = panel.querySelector("#tse_hq_title .sub");
+        if (!sub) return;
         sub.innerHTML = ok
           ? `<span class="tse_ok">${esc(msg)}</span>`
           : `<span class="tse_err">${esc(msg)}</span>`;
@@ -547,16 +605,23 @@
         togglePanel();
       };
 
-      panel.querySelector("#tse_hq_close").onclick = (e) => {
-        e.preventDefault();
-        closePanel();
-      };
+      const closeBtn = panel.querySelector("#tse_hq_close");
+      const refreshBtn = panel.querySelector("#tse_hq_refresh");
 
-      panel.querySelector("#tse_hq_refresh").onclick = async (e) => {
-        e.preventDefault();
-        await fetchState();
-        renderBody();
-      };
+      if (closeBtn) {
+        closeBtn.onclick = (e) => {
+          e.preventDefault();
+          closePanel();
+        };
+      }
+
+      if (refreshBtn) {
+        refreshBtn.onclick = async (e) => {
+          e.preventDefault();
+          await fetchState();
+          renderBody();
+        };
+      }
 
       window.addEventListener("resize", applyUIPositions);
 
