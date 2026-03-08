@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.5.3
-// @description  T.S.E Headquarters. Restores icon + overlay + click toggle + on-top icon + live HoF total search.
+// @version      8.6.0
+// @description  T.S.E Headquarters. Draggable icon, clickable overlay, on-top icon, PDA friendly, live HoF range search with page-compensation metadata + local fallback display.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
@@ -23,14 +23,14 @@
     if (window.__TSE_HQ_LOADED__) return;
     window.__TSE_HQ_LOADED__ = true;
 
-    const DEFAULT_BASE_URL = "https://trains-selling-enterprise.onrender.com";
+    const BASE_URL = "https://trains-selling-enterprise.onrender.com";
 
     const K_ADMIN = "tse_hq_admin_v1";
     const K_API = "tse_hq_api_v1";
     const K_TOKEN = "tse_hq_token_v1";
     const K_UI = "tse_hq_ui_v1";
     const K_NOTES = "tse_hq_notes_v1";
-    const K_HOF_FILTERS = "tse_hq_hof_filters_v1";
+    const K_HOF_FILTERS = "tse_hq_hof_filters_v2";
 
     const uiDefault = {
       open: false,
@@ -42,7 +42,8 @@
     const hofDefault = {
       min_total: "",
       max_total: "",
-      limit: "50"
+      limit: "50",
+      use_local_fallback: true
     };
 
     let started = false;
@@ -148,7 +149,7 @@
         background:linear-gradient(180deg, rgba(214,179,90,.25), rgba(15,27,51,.96));
         border:1px solid rgba(214,179,90,.45);
         box-shadow:0 10px 30px rgba(0,0,0,.5);
-        font-size:26px;
+        font-size:27px;
         cursor:pointer;
         user-select:none;
         -webkit-user-select:none;
@@ -292,6 +293,8 @@
       .tse_small{ font-size:11px; color:#aebddd; line-height:1.35; }
       .tse_ok{ color:#34d57a; font-weight:900; }
       .tse_err{ color:#ff5968; font-weight:900; }
+      .tse_warn{ color:#ffd166; font-weight:900; }
+
       .tse_list{ display:flex; flex-direction:column; gap:8px; }
       .tse_item{
         background:rgba(12,23,45,.68);
@@ -312,6 +315,7 @@
         gap:6px;
         flex-wrap:wrap;
       }
+
       .tse_grid_3{
         display:grid;
         grid-template-columns:repeat(3,minmax(0,1fr));
@@ -327,6 +331,25 @@
       .tse_kpi .k{ font-size:10px; color:#aebddd; font-weight:900; }
       .tse_kpi .v{ font-size:13px; font-weight:1000; margin-top:2px; }
 
+      .tse_hof_meta{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+        margin-top:10px;
+      }
+      .tse_pill{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:5px 8px;
+        border-radius:999px;
+        font-size:10px;
+        font-weight:900;
+        border:1px solid rgba(255,255,255,.10);
+        background:rgba(11,18,32,.72);
+        color:#eef3ff;
+      }
+
       @media (max-width:720px){
         #tse_hq_panel{
           width:96vw !important;
@@ -337,6 +360,7 @@
         }
         #tse_hq_body{ max-height:calc(84vh - 94px); }
         .tse_grid_3{ grid-template-columns:1fr; }
+        .tse_hof_meta{ grid-template-columns:1fr; }
         .tse_field{ flex:1 1 100%; min-width:100%; }
         .tse_item .top{ flex-direction:column; }
       }
@@ -468,7 +492,10 @@
         companyKeys: [],
         trains: [],
         serverTime: null,
-        hofResults: []
+        hofResults: [],
+        hofSource: "",
+        hofPagesScanned: 0,
+        hofSampledPages: []
       };
 
       function saveUI() {
@@ -687,7 +714,7 @@
         const existing = (GM_getValue(K_TOKEN, "") || "").trim();
         if (existing) return { ok: true, token: existing };
 
-        const res = await http("POST", `${DEFAULT_BASE_URL}/api/auth`, {
+        const res = await http("POST", `${BASE_URL}/api/auth`, {
           headers: { "Content-Type": "application/json" },
           data: JSON.stringify({ admin_key: adminKey, api_key: apiKey })
         });
@@ -707,18 +734,40 @@
         const auth = await ensureAuth();
 
         if (!auth.ok) {
-          state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
+          state = {
+            ok: false,
+            user: null,
+            companies: [],
+            companyKeys: [],
+            trains: [],
+            serverTime: null,
+            hofResults: state.hofResults || [],
+            hofSource: state.hofSource || "",
+            hofPagesScanned: state.hofPagesScanned || 0,
+            hofSampledPages: state.hofSampledPages || []
+          };
           toast(auth.error, false);
           return;
         }
 
-        const res = await http("GET", `${DEFAULT_BASE_URL}/state`, {
+        const res = await http("GET", `${BASE_URL}/state`, {
           headers: { "X-Session-Token": auth.token }
         });
 
         if (!res.json || res.status >= 400) {
           if (res.status === 401) GM_deleteValue(K_TOKEN);
-          state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: state.hofResults || [] };
+          state = {
+            ok: false,
+            user: null,
+            companies: [],
+            companyKeys: [],
+            trains: [],
+            serverTime: null,
+            hofResults: state.hofResults || [],
+            hofSource: state.hofSource || "",
+            hofPagesScanned: state.hofPagesScanned || 0,
+            hofSampledPages: state.hofSampledPages || []
+          };
           toast(res.json?.error || res.json?.details || `State failed (${res.status})`, false);
           return;
         }
@@ -736,7 +785,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("GET", `${DEFAULT_BASE_URL}/company_ids`, {
+        const res = await http("GET", `${BASE_URL}/company_ids`, {
           headers: { "X-Session-Token": auth.token }
         });
 
@@ -748,7 +797,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("POST", `${DEFAULT_BASE_URL}/company_ids`, {
+        const res = await http("POST", `${BASE_URL}/company_ids`, {
           headers: { "Content-Type": "application/json", "X-Session-Token": auth.token },
           data: JSON.stringify({ company_ids: ids })
         });
@@ -761,7 +810,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("POST", `${DEFAULT_BASE_URL}/company-keys`, {
+        const res = await http("POST", `${BASE_URL}/company-keys`, {
           headers: { "Content-Type": "application/json", "X-Session-Token": auth.token },
           data: JSON.stringify({ company_id, api_key })
         });
@@ -774,7 +823,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("DELETE", `${DEFAULT_BASE_URL}/company-keys/${encodeURIComponent(company_id)}`, {
+        const res = await http("DELETE", `${BASE_URL}/company-keys/${encodeURIComponent(company_id)}`, {
           headers: { "X-Session-Token": auth.token }
         });
 
@@ -786,7 +835,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("POST", `${DEFAULT_BASE_URL}/trains`, {
+        const res = await http("POST", `${BASE_URL}/trains`, {
           headers: { "Content-Type": "application/json", "X-Session-Token": auth.token },
           data: JSON.stringify(payload)
         });
@@ -799,7 +848,7 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("DELETE", `${DEFAULT_BASE_URL}/trains/${encodeURIComponent(id)}`, {
+        const res = await http("DELETE", `${BASE_URL}/trains/${encodeURIComponent(id)}`, {
           headers: { "X-Session-Token": auth.token }
         });
 
@@ -811,13 +860,22 @@
         const auth = await ensureAuth();
         if (!auth.ok) throw new Error(auth.error);
 
-        const res = await http("POST", `${DEFAULT_BASE_URL}/hof/search`, {
+        const res = await http("POST", `${BASE_URL}/hof/search`, {
           headers: { "Content-Type": "application/json", "X-Session-Token": auth.token },
           data: JSON.stringify(payload)
         });
 
-        if (!res.json || res.status >= 400) throw new Error(res.json?.error || res.json?.details || `HoF search failed (${res.status})`);
-        return Array.isArray(res.json.results) ? res.json.results : [];
+        if (!res.json || res.status >= 400) {
+          throw new Error(res.json?.error || res.json?.details || `HoF search failed (${res.status})`);
+        }
+
+        return {
+          results: Array.isArray(res.json.results) ? res.json.results : [],
+          source: String(res.json.source || ""),
+          pages_scanned: num(res.json.pages_scanned, 0),
+          sampled_pages: Array.isArray(res.json.sampled_pages) ? res.json.sampled_pages : [],
+          count: num(res.json.count, 0)
+        };
       }
 
       function renderCompanies() {
@@ -977,6 +1035,19 @@
       function renderHoF() {
         const results = state.hofResults || [];
         const filters = gmJsonGet(K_HOF_FILTERS, clone(hofDefault)) || clone(hofDefault);
+        const source = String(state.hofSource || "");
+        const pagesScanned = num(state.hofPagesScanned, 0);
+        const sampledPages = Array.isArray(state.hofSampledPages) ? state.hofSampledPages : [];
+
+        let sourceLabel = "No search yet";
+        let sourceClass = "";
+        if (source === "torn_live_hof") {
+          sourceLabel = "Live Torn HoF";
+          sourceClass = "tse_ok";
+        } else if (source === "local_hof_cache") {
+          sourceLabel = "Local HoF Cache";
+          sourceClass = "tse_warn";
+        }
 
         bodyEl.innerHTML = `
           <div class="tse_card">
@@ -996,9 +1067,43 @@
             </div>
 
             <div class="tse_row" style="margin-top:10px;">
+              <label class="tse_small" style="display:flex;align-items:center;gap:8px;">
+                <input id="tse_hof_local_fallback" type="checkbox" ${filters.use_local_fallback ? "checked" : ""}>
+                Use local cache fallback if live HoF returns nothing
+              </label>
+            </div>
+
+            <div class="tse_row" style="margin-top:10px;">
               <button class="tse_btn gold" id="tse_hof_run">Search</button>
               <div class="tse_small" id="tse_hof_msg"></div>
             </div>
+
+            <div class="tse_hof_meta">
+              <div class="tse_kpi">
+                <div class="k">Source</div>
+                <div class="v ${sourceClass}">${esc(sourceLabel)}</div>
+              </div>
+              <div class="tse_kpi">
+                <div class="k">Pages Scanned</div>
+                <div class="v">${esc(pagesScanned)}</div>
+              </div>
+            </div>
+
+            ${
+              sampledPages.length
+                ? `
+                  <div class="tse_small" style="margin-top:10px;">Sampled page ranges used to compensate for where your search range should exist:</div>
+                  <div class="tse_row" style="margin-top:8px;">
+                    ${sampledPages.slice(0, 12).map(p => `
+                      <span class="tse_pill">
+                        Off ${esc(p.offset)}
+                        • ${esc(p.max_total)}→${esc(p.min_total)}
+                      </span>
+                    `).join("")}
+                  </div>
+                `
+                : ``
+            }
           </div>
 
           <div class="tse_list">
@@ -1010,6 +1115,16 @@
                       <div>
                         <div class="name">${esc(r.name || "Unknown")} ${r.id ? `[${esc(r.id)}]` : ""}</div>
                         <div class="meta">Rank: ${esc(r.rank || "-")} • Total: ${esc(r.total || 0)}</div>
+                        ${
+                          (r.manual_labor || r.intelligence || r.endurance)
+                            ? `<div class="meta">MAN: ${esc(r.manual_labor || 0)} • INT: ${esc(r.intelligence || 0)} • END: ${esc(r.endurance || 0)}</div>`
+                            : ``
+                        }
+                        ${
+                          r.job_status || r.company_name
+                            ? `<div class="meta">${r.job_status ? `Status: ${esc(r.job_status)}` : ``}${r.company_name ? ` • Company: ${esc(r.company_name)}` : ``}</div>`
+                            : ``
+                        }
                       </div>
                       <div class="actions">
                         ${r.id ? `<button class="tse_btn" data-open-player="${esc(r.id)}">Open</button>` : ``}
@@ -1031,20 +1146,31 @@
             const min_total = String(bodyEl.querySelector("#tse_hof_min_total").value || "").trim();
             const max_total = String(bodyEl.querySelector("#tse_hof_max_total").value || "").trim();
             const limit = String(bodyEl.querySelector("#tse_hof_limit").value || "50").trim();
+            const use_local_fallback = !!bodyEl.querySelector("#tse_hof_local_fallback").checked;
 
-            gmJsonSet(K_HOF_FILTERS, { min_total, max_total, limit });
+            gmJsonSet(K_HOF_FILTERS, { min_total, max_total, limit, use_local_fallback });
 
             const maxVal = parseInt(max_total || "0", 10);
-
-            state.hofResults = await runHofSearch({
+            const response = await runHofSearch({
               min_total: parseInt(min_total || "0", 10),
               max_total: maxVal > 0 ? maxVal : 0,
-              limit: parseInt(limit || "50", 10)
+              limit: parseInt(limit || "50", 10),
+              use_local_fallback
             });
+
+            state.hofResults = response.results || [];
+            state.hofSource = response.source || "";
+            state.hofPagesScanned = response.pages_scanned || 0;
+            state.hofSampledPages = response.sampled_pages || [];
 
             renderHoF();
             openPanel();
-            toast(`Found ${state.hofResults.length} result(s)`, true);
+
+            if (state.hofSource === "local_hof_cache") {
+              toast(`Found ${state.hofResults.length} result(s) from local cache`, true);
+            } else {
+              toast(`Found ${state.hofResults.length} result(s)`, true);
+            }
           } catch (e) {
             msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
             toast(e?.message || String(e), false);
@@ -1262,7 +1388,18 @@
 
         bodyEl.querySelector("#tse_set_logout").onclick = () => {
           GM_deleteValue(K_TOKEN);
-          state = { ok: false, user: null, companies: [], companyKeys: [], trains: [], serverTime: null, hofResults: [] };
+          state = {
+            ok: false,
+            user: null,
+            companies: [],
+            companyKeys: [],
+            trains: [],
+            serverTime: null,
+            hofResults: [],
+            hofSource: "",
+            hofPagesScanned: 0,
+            hofSampledPages: []
+          };
           msg.innerHTML = `<span class="tse_ok">Logged out</span>`;
           toast("Logged out", true);
         };
