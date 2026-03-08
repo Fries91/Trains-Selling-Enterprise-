@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.4.6
-// @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, HoF search, notes, company keys, settings.
+// @version      8.5.0
+// @description  T.S.E Headquarters hub overlay. PDA friendly. Companies, trains, live Torn HoF total search, notes, company keys, settings.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
@@ -35,12 +35,19 @@
   const K_USER = "tse_hq_user_v1";
   const K_UI = "tse_hq_ui_v1";
   const K_NOTES = "tse_hq_notes_v1";
+  const K_HOF_FILTERS = "tse_hq_hof_filters_v1";
 
   const uiDefault = {
     open: false,
     tab: "companies",
     badge: { x: 14, y: 165 },
     panel: { x: 10, y: 72 }
+  };
+
+  const hofFiltersDefault = {
+    min_total: "",
+    max_total: "",
+    limit: "50"
   };
 
   function clone(obj) {
@@ -527,16 +534,16 @@
       badge.classList.toggle("hasDot", !!on);
     }
 
-    function setStatusLine(msg, ok = true) {
+    function setStatusLine(msg, okay = true) {
       const sub = panel.querySelector("#tse_hq_title .sub");
-      sub.innerHTML = ok
+      sub.innerHTML = okay
         ? `<span class="tse_ok">${esc(msg)}</span>`
         : `<span class="tse_err">${esc(msg)}</span>`;
     }
 
-    function toast(msg, ok = true) {
-      setStatusLine(msg, ok);
-      setDot(!ok);
+    function toast(msg, okay = true) {
+      setStatusLine(msg, okay);
+      setDot(!okay);
       clearTimeout(toast._t);
       toast._t = setTimeout(() => setDot(false), 3500);
     }
@@ -1060,52 +1067,29 @@
 
     function renderHoF() {
       const results = state.hofResults || [];
+      const filters = gmJsonGet(K_HOF_FILTERS, clone(hofFiltersDefault)) || clone(hofFiltersDefault);
 
       bodyEl.innerHTML = `
         <div class="tse_card">
           <div class="tse_row">
             <div class="tse_field">
               <div class="tse_label">Min Total</div>
-              <input class="tse_input" id="tse_hof_min_total" type="number" min="0" placeholder="500">
+              <input class="tse_input" id="tse_hof_min_total" type="number" min="0" placeholder="500" value="${esc(filters.min_total || "")}">
             </div>
             <div class="tse_field">
               <div class="tse_label">Max Total</div>
-              <input class="tse_input" id="tse_hof_max_total" type="number" min="0" placeholder="120000">
+              <input class="tse_input" id="tse_hof_max_total" type="number" min="0" placeholder="120000" value="${esc(filters.max_total || "")}">
             </div>
-            <div class="tse_field">
-              <div class="tse_label">Status</div>
-              <select class="tse_select" id="tse_hof_status">
-                <option value="any">Any</option>
-                <option value="none">No company</option>
-                <option value="company">In company</option>
-                <option value="cityjob">City job</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="tse_row" style="margin-top:10px;">
-            <div class="tse_field">
-              <div class="tse_label">Min Manual</div>
-              <input class="tse_input" id="tse_hof_min_man" type="number" min="0" placeholder="0">
-            </div>
-            <div class="tse_field">
-              <div class="tse_label">Min Intelligence</div>
-              <input class="tse_input" id="tse_hof_min_int" type="number" min="0" placeholder="0">
-            </div>
-            <div class="tse_field">
-              <div class="tse_label">Min Endurance</div>
-              <input class="tse_input" id="tse_hof_min_end" type="number" min="0" placeholder="0">
-            </div>
-          </div>
-
-          <div class="tse_row" style="margin-top:10px;">
             <div class="tse_field">
               <div class="tse_label">Limit</div>
-              <input class="tse_input" id="tse_hof_limit" type="number" min="1" max="100" value="50">
+              <input class="tse_input" id="tse_hof_limit" type="number" min="1" max="100" value="${esc(filters.limit || "50")}">
             </div>
-            <div class="tse_field" style="flex:2 1 320px;">
+          </div>
+
+          <div class="tse_row" style="margin-top:10px;">
+            <div class="tse_field" style="flex:1 1 100%;">
               <div class="tse_label">Notes</div>
-              <div class="tse_small">This searches the server’s worker table.</div>
+              <div class="tse_small">Live search from Torn Hall of Fame using total work stats only.</div>
             </div>
           </div>
 
@@ -1122,19 +1106,13 @@
                 <div class="tse_item">
                   <div class="top">
                     <div style="min-width:0;">
-                      <div class="name">${esc(r.name || "Unknown")} [${esc(r.id || "")}]</div>
-                      <div class="meta">${esc(r.job_status || "unknown")} ${r.company_name ? `• ${esc(r.company_name)}` : ""}</div>
+                      <div class="name">${esc(r.name || "Unknown")} ${r.id ? `[${esc(r.id)}]` : ""}</div>
+                      <div class="meta">Rank: ${esc(r.rank || "-")} • Total work stats: ${esc(r.total || 0)}</div>
                     </div>
                     <div class="actions">
-                      <button class="tse_btn" data-open-player="${esc(r.id)}">Open</button>
+                      ${r.id ? `<button class="tse_btn" data-open-player="${esc(r.id)}">Open</button>` : ``}
                     </div>
                   </div>
-                  <div class="tse_grid_3">
-                    <div class="tse_kpi"><div class="k">Manual</div><div class="v">${esc(r.manual_labor || 0)}</div></div>
-                    <div class="tse_kpi"><div class="k">Intelligence</div><div class="v">${esc(r.intelligence || 0)}</div></div>
-                    <div class="tse_kpi"><div class="k">Endurance</div><div class="v">${esc(r.endurance || 0)}</div></div>
-                  </div>
-                  <div class="tse_small" style="margin-top:8px;">Total: <b>${esc(r.total || 0)}</b></div>
                 </div>
               `).join("")
               : `<div class="tse_card"><div class="tse_small">No HoF results yet.</div></div>`
@@ -1147,16 +1125,25 @@
       bodyEl.querySelector("#tse_hof_run").addEventListener("click", async () => {
         try {
           msg.innerHTML = `<span class="tse_small">Searching…</span>`;
-          const maxVal = parseInt(bodyEl.querySelector("#tse_hof_max_total").value || "0", 10);
+
+          const min_total = String(bodyEl.querySelector("#tse_hof_min_total").value || "").trim();
+          const max_total = String(bodyEl.querySelector("#tse_hof_max_total").value || "").trim();
+          const limit = String(bodyEl.querySelector("#tse_hof_limit").value || "50").trim();
+
+          gmJsonSet(K_HOF_FILTERS, {
+            min_total,
+            max_total,
+            limit
+          });
+
+          const maxVal = parseInt(max_total || "0", 10);
+
           const payload = {
-            min_total: parseInt(bodyEl.querySelector("#tse_hof_min_total").value || "0", 10),
-            max_total: maxVal > 0 ? maxVal : 999999999,
-            min_man: parseInt(bodyEl.querySelector("#tse_hof_min_man").value || "0", 10),
-            min_int: parseInt(bodyEl.querySelector("#tse_hof_min_int").value || "0", 10),
-            min_end: parseInt(bodyEl.querySelector("#tse_hof_min_end").value || "0", 10),
-            status: bodyEl.querySelector("#tse_hof_status").value,
-            limit: parseInt(bodyEl.querySelector("#tse_hof_limit").value || "50", 10)
+            min_total: parseInt(min_total || "0", 10),
+            max_total: maxVal > 0 ? maxVal : 0,
+            limit: parseInt(limit || "50", 10)
           };
+
           state.hofResults = await runHofSearch(payload);
           renderHoF();
           toast(`Found ${state.hofResults.length} result(s)`, true);
@@ -1169,6 +1156,7 @@
       bodyEl.querySelectorAll("[data-open-player]").forEach(btn => {
         btn.addEventListener("click", () => {
           const id = btn.getAttribute("data-open-player");
+          if (!id) return;
           window.open(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`, "_blank");
         });
       });
