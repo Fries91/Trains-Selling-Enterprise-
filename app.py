@@ -4,31 +4,29 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from flask import Flask, jsonify, request, Response
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request
 
 from db import (
-    create_session,
-    delete_company_key,
-    delete_train,
-    get_company_key,
-    get_session,
-    get_user,
-    hof_count,
     init_db,
-    list_company_keys,
-    list_hof_workers_range,
-    list_trains,
-    save_company_key,
-    set_company_ids,
-    touch_session,
-    touch_user,
-    upsert_hof_worker,
     upsert_user,
+    get_user,
+    touch_user,
+    create_session,
+    get_session,
+    touch_session,
     add_train,
+    list_trains,
+    delete_train,
+    set_company_ids,
+    hof_count,
+    save_company_key,
+    list_company_keys,
+    delete_company_key,
+    get_company_key,
 )
+from torn_api import me_basic, company_profile, normalize_company
 from importer import import_hof_workers_from_json_file
-from torn_api import company_profile, me_basic, normalize_company
 
 load_dotenv()
 app = Flask(__name__)
@@ -39,8 +37,6 @@ HOF_DATA_FILE = (os.getenv("HOF_DATA_FILE") or "hof_workers.json").strip()
 
 TORN_HOF_URL = "https://api.torn.com/v2/torn/hof"
 HOF_PAGE_SIZE = 100
-HOF_MAX_SCAN_PAGES = 60
-HOF_SAMPLE_OFFSETS = [0, 100, 250, 500, 1000, 1500, 2500, 5000, 7500, 10000]
 
 
 def utc_now() -> str:
@@ -83,16 +79,6 @@ def _to_int(v: Any) -> int:
         return 0
 
 
-def _as_int(value: Any, default: int = 0) -> int:
-    try:
-        raw = str(value).replace(",", "").strip()
-        if raw == "":
-            return default
-        return int(float(raw))
-    except Exception:
-        return default
-
-
 def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
@@ -127,6 +113,7 @@ def import_hof_workers_from_payload_local(payload: Any) -> int:
         company_name = str(row.get("company_name") or row.get("company") or "").strip()
         job_status = _normalize_status(row.get("job_status") or row.get("status"), company_name)
 
+        from db import upsert_hof_worker
         upsert_hof_worker(
             player_id=player_id,
             name=name,
@@ -165,6 +152,16 @@ def _append_company_id(user_id: str, company_id: str) -> List[str]:
     return ids
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        raw = str(value).replace(",", "").strip()
+        if raw == "":
+            return default
+        return int(float(raw))
+    except Exception:
+        return default
+
+
 def _hof_pick_rows(payload: Any) -> List[Dict[str, Any]]:
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
@@ -190,7 +187,15 @@ def _hof_pick_rows(payload: Any) -> List[Dict[str, Any]]:
 
 
 def _hof_pick_total(row: Dict[str, Any]) -> int:
-    for key in ("value", "total", "score", "stat", "amount", "workstats", "work_stats"):
+    for key in (
+        "value",
+        "total",
+        "score",
+        "stat",
+        "amount",
+        "workstats",
+        "work_stats",
+    ):
         if key in row:
             return _as_int(row.get(key), 0)
 
@@ -232,7 +237,7 @@ def _fetch_torn_hof_page(api_key: str, offset: int, limit: int) -> List[Dict[str
         {"key": api_key, "category": "workstats", "offset": offset, "limit": limit},
     ]
 
-    last_error: Optional[Exception] = None
+    last_error = None
 
     for params in attempts:
         try:
@@ -258,6 +263,7 @@ def _fetch_torn_hof_page(api_key: str, offset: int, limit: int) -> List[Dict[str
 
 def _rows_to_results(rows: List[Dict[str, Any]], offset: int, min_total: int, max_total: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
+
     for idx, row in enumerate(rows):
         total = _hof_pick_total(row)
         if total < min_total or total > max_total:
@@ -271,6 +277,7 @@ def _rows_to_results(rows: List[Dict[str, Any]], offset: int, min_total: int, ma
             "total": total,
             "profile_url": f"https://www.torn.com/profiles.php?XID={player_id}" if player_id else "",
         })
+
     return out
 
 
@@ -281,133 +288,129 @@ def _page_range(rows: List[Dict[str, Any]]) -> Tuple[int, int]:
     return (max(totals), min(totals))
 
 
-def _collect_live_hof_results(api_key: str, min_total: int, max_total: int, limit: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: int, limit: int):
     visited_offsets = set()
     results_by_id: Dict[str, Dict[str, Any]] = {}
-    pages_scanned = 0
     sampled_pages: List[Dict[str, Any]] = []
-    candidate_offsets: List[int] = [0]
+    pages_scanned = 0
 
-    for sample_offset in HOF_SAMPLE_OFFSETS:
-        if sample_offset in visited_offsets:
-            continue
-        rows = _fetch_torn_hof_page(api_key, sample_offset, HOF_PAGE_SIZE)
+    def fetch_page(offset: int):
+        nonlocal pages_scanned
+        offset = max(0, int(offset))
+        if offset in visited_offsets:
+            return None, None, None
+        rows = _fetch_torn_hof_page(api_key, offset, HOF_PAGE_SIZE)
+        visited_offsets.add(offset)
         pages_scanned += 1
-        visited_offsets.add(sample_offset)
         if not rows:
+            return [], 0, 0
+        hi, lo = _page_range(rows)
+        sampled_pages.append({
+            "offset": offset,
+            "max_total": hi,
+            "min_total": lo,
+        })
+        return rows, hi, lo
+
+    low_off = 0
+    high_off = 0
+    probe = 0
+    found_band = False
+
+    probe_sequence = [
+        0, 1000, 2500, 5000, 10000, 20000, 40000, 80000, 120000, 160000, 200000
+    ]
+
+    prev_probe = 0
+    prev_hi = None
+    prev_lo = None
+
+    for probe in probe_sequence:
+        if pages_scanned >= 80:
             break
 
-        hi, lo = _page_range(rows)
-        sampled_pages.append({"offset": sample_offset, "max_total": hi, "min_total": lo})
-
-        matches = _rows_to_results(rows, sample_offset, min_total, max_total)
-        for item in matches:
-            key = item["id"] or f"rank-{item['rank']}"
-            results_by_id[key] = item
-
-        if lo <= max_total and hi >= min_total:
-            candidate_offsets.append(sample_offset)
-
-        if lo < min_total and sample_offset > 0:
-            candidate_offsets.append(max(0, sample_offset - HOF_PAGE_SIZE))
-            candidate_offsets.append(sample_offset)
-
-    sampled_pages.sort(key=lambda x: x["offset"])
-
-    if sampled_pages:
-        bracketed = False
-        for i in range(len(sampled_pages) - 1):
-            a = sampled_pages[i]
-            b = sampled_pages[i + 1]
-            a_lo = int(a["min_total"])
-            a_hi = int(a["max_total"])
-            b_lo = int(b["min_total"])
-            b_hi = int(b["max_total"])
-
-            if (a_lo >= min_total >= b_lo) or (a_hi >= min_total >= b_hi) or (a_lo >= max_total >= b_lo):
-                start = int(a["offset"])
-                end = int(b["offset"])
-                for off in range(start, end + HOF_PAGE_SIZE, HOF_PAGE_SIZE):
-                    candidate_offsets.append(off)
-                bracketed = True
-                break
-
-        if not bracketed:
-            nearest = min(
-                sampled_pages,
-                key=lambda x: min(abs(int(x["max_total"]) - min_total), abs(int(x["min_total"]) - min_total))
-            )
-            base = int(nearest["offset"])
-            for delta in (-300, -200, -100, 0, 100, 200, 300):
-                candidate_offsets.append(max(0, base + delta))
-
-    queue: List[int] = []
-    for off in candidate_offsets:
-        if off not in queue:
-            queue.append(off)
-
-    while queue and pages_scanned < HOF_MAX_SCAN_PAGES and len(results_by_id) < limit:
-        offset = queue.pop(0)
-        if offset in visited_offsets:
-            continue
-
-        rows = _fetch_torn_hof_page(api_key, offset, HOF_PAGE_SIZE)
-        pages_scanned += 1
-        visited_offsets.add(offset)
-        if not rows:
-            continue
-
-        hi, lo = _page_range(rows)
-        matches = _rows_to_results(rows, offset, min_total, max_total)
-
-        for item in matches:
-            key = item["id"] or f"rank-{item['rank']}"
-            results_by_id[key] = item
+        rows, hi, lo = fetch_page(probe)
+        if rows is None or not rows:
+            break
 
         if hi >= min_total and lo <= max_total:
-            for nxt in (offset - HOF_PAGE_SIZE, offset + HOF_PAGE_SIZE):
-                if nxt >= 0 and nxt not in visited_offsets and nxt not in queue:
-                    queue.append(nxt)
-        elif lo > max_total:
-            nxt = offset + HOF_PAGE_SIZE
-            if nxt not in visited_offsets and nxt not in queue:
-                queue.append(nxt)
+            low_off = probe
+            high_off = probe
+            found_band = True
+            break
+
+        if lo > max_total:
+            prev_probe = probe
+            prev_hi = hi
+            prev_lo = lo
+            continue
+
+        if hi < min_total:
+            low_off = prev_probe
+            high_off = probe
+            found_band = True
+            break
+
+    if not found_band:
+        if prev_lo is not None and prev_lo > max_total:
+            low_off = prev_probe
+            high_off = max(prev_probe + HOF_PAGE_SIZE, 200000)
+        else:
+            low_off = 0
+            high_off = max(probe, HOF_PAGE_SIZE)
+
+    left = min(low_off, high_off)
+    right = max(low_off, high_off)
+
+    while right - left > HOF_PAGE_SIZE and pages_scanned < 120:
+        mid = ((left + right) // (2 * HOF_PAGE_SIZE)) * HOF_PAGE_SIZE
+        rows, hi, lo = fetch_page(mid)
+        if rows is None or not rows:
+            break
+
+        if hi >= min_total and lo <= max_total:
+            left = max(0, mid - HOF_PAGE_SIZE)
+            right = mid + HOF_PAGE_SIZE
+            break
+
+        if lo > max_total:
+            left = mid + HOF_PAGE_SIZE
         elif hi < min_total:
-            nxt = max(0, offset - HOF_PAGE_SIZE)
-            if nxt not in visited_offsets and nxt not in queue:
-                queue.append(nxt)
+            right = max(0, mid - HOF_PAGE_SIZE)
+        else:
+            left = max(0, mid - HOF_PAGE_SIZE)
+            right = mid + HOF_PAGE_SIZE
+            break
+
+    start = max(0, left - (10 * HOF_PAGE_SIZE))
+    end = max(start, right + (10 * HOF_PAGE_SIZE))
+
+    for offset in range(start, end + HOF_PAGE_SIZE, HOF_PAGE_SIZE):
+        if pages_scanned >= 180:
+            break
+
+        rows, hi, lo = fetch_page(offset)
+        if rows is None or not rows:
+            continue
+
+        matches = _rows_to_results(rows, offset, min_total, max_total)
+        for item in matches:
+            key = item["id"] or f"rank-{item['rank']}"
+            results_by_id[key] = item
+
+        if hi < min_total and offset > right:
+            break
 
     results = list(results_by_id.values())
     results.sort(key=lambda r: (int(r.get("total") or 0), -int(r.get("rank") or 10**9)), reverse=True)
 
+    sampled_pages.sort(key=lambda x: x["offset"])
     meta = {
         "pages_scanned": pages_scanned,
-        "sampled_pages": sampled_pages,
+        "sampled_pages": sampled_pages[:60],
         "visited_offsets": sorted(visited_offsets),
     }
     return results[:limit], meta
-
-
-def _local_hof_results(min_total: int, max_total: int, limit: int) -> List[Dict[str, Any]]:
-    rows = list_hof_workers_range(min_total=min_total, max_total=max_total, limit=limit)
-    out: List[Dict[str, Any]] = []
-
-    for idx, row in enumerate(rows, start=1):
-        player_id = str(row.get("id") or "").strip()
-        out.append({
-            "id": player_id,
-            "name": str(row.get("name") or "Unknown"),
-            "rank": idx,
-            "total": _as_int(row.get("total"), 0),
-            "manual_labor": _as_int(row.get("manual_labor"), 0),
-            "intelligence": _as_int(row.get("intelligence"), 0),
-            "endurance": _as_int(row.get("endurance"), 0),
-            "job_status": str(row.get("job_status") or "unknown"),
-            "company_name": str(row.get("company_name") or ""),
-            "profile_url": f"https://www.torn.com/profiles.php?XID={player_id}" if player_id else "",
-        })
-
-    return out
 
 
 @app.after_request
@@ -756,7 +759,6 @@ def hof_search():
     min_total = max(0, _as_int(body.get("min_total"), 0))
     max_total = _as_int(body.get("max_total"), 0)
     limit = max(1, min(100, _as_int(body.get("limit"), 50)))
-    use_local_fallback = str(body.get("use_local_fallback", "1")).strip().lower() not in {"0", "false", "no"}
 
     if max_total <= 0:
         max_total = 10**18
@@ -765,32 +767,11 @@ def hof_search():
         return fail("max_total must be greater than or equal to min_total", 400)
 
     try:
-        live_results, meta = _collect_live_hof_results(api_key, min_total, max_total, limit)
-
-        if live_results:
-            return ok({
-                "results": live_results,
-                "count": len(live_results),
-                "source": "torn_live_hof",
-                "pages_scanned": meta.get("pages_scanned", 0),
-                "sampled_pages": meta.get("sampled_pages", []),
-                "server_time": utc_now(),
-            })
-
-        if use_local_fallback:
-            local_results = _local_hof_results(min_total, max_total, limit)
-            return ok({
-                "results": local_results,
-                "count": len(local_results),
-                "source": "local_hof_cache",
-                "pages_scanned": meta.get("pages_scanned", 0),
-                "sampled_pages": meta.get("sampled_pages", []),
-                "server_time": utc_now(),
-            })
+        live_results, meta = _collect_live_hof_results_binary(api_key, min_total, max_total, limit)
 
         return ok({
-            "results": [],
-            "count": 0,
+            "results": live_results,
+            "count": len(live_results),
             "source": "torn_live_hof",
             "pages_scanned": meta.get("pages_scanned", 0),
             "sampled_pages": meta.get("sampled_pages", []),
