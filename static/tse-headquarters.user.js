@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.6.0
-// @description  T.S.E Headquarters. Draggable icon, clickable overlay, on-top icon, PDA friendly, live HoF range search with page-compensation metadata + local fallback display.
+// @version      8.7.0
+// @description  T.S.E Headquarters. Draggable icon, clickable overlay, on-top icon, PDA friendly, live HoF range search for active players only (last 3 days), no inactive fallback.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
@@ -30,7 +30,7 @@
     const K_TOKEN = "tse_hq_token_v1";
     const K_UI = "tse_hq_ui_v1";
     const K_NOTES = "tse_hq_notes_v1";
-    const K_HOF_FILTERS = "tse_hq_hof_filters_v2";
+    const K_HOF_FILTERS = "tse_hq_hof_filters_v3";
 
     const uiDefault = {
       open: false,
@@ -43,7 +43,7 @@
       min_total: "",
       max_total: "",
       limit: "50",
-      use_local_fallback: true
+      active_days: "3"
     };
 
     let started = false;
@@ -333,7 +333,7 @@
 
       .tse_hof_meta{
         display:grid;
-        grid-template-columns:repeat(2,minmax(0,1fr));
+        grid-template-columns:repeat(3,minmax(0,1fr));
         gap:8px;
         margin-top:10px;
       }
@@ -495,6 +495,8 @@
         hofResults: [],
         hofSource: "",
         hofPagesScanned: 0,
+        hofProfilesChecked: 0,
+        hofActiveDays: 3,
         hofSampledPages: []
       };
 
@@ -744,6 +746,8 @@
             hofResults: state.hofResults || [],
             hofSource: state.hofSource || "",
             hofPagesScanned: state.hofPagesScanned || 0,
+            hofProfilesChecked: state.hofProfilesChecked || 0,
+            hofActiveDays: state.hofActiveDays || 3,
             hofSampledPages: state.hofSampledPages || []
           };
           toast(auth.error, false);
@@ -766,6 +770,8 @@
             hofResults: state.hofResults || [],
             hofSource: state.hofSource || "",
             hofPagesScanned: state.hofPagesScanned || 0,
+            hofProfilesChecked: state.hofProfilesChecked || 0,
+            hofActiveDays: state.hofActiveDays || 3,
             hofSampledPages: state.hofSampledPages || []
           };
           toast(res.json?.error || res.json?.details || `State failed (${res.status})`, false);
@@ -873,6 +879,8 @@
           results: Array.isArray(res.json.results) ? res.json.results : [],
           source: String(res.json.source || ""),
           pages_scanned: num(res.json.pages_scanned, 0),
+          profiles_checked: num(res.json.profiles_checked, 0),
+          active_days: num(res.json.active_days, 3),
           sampled_pages: Array.isArray(res.json.sampled_pages) ? res.json.sampled_pages : [],
           count: num(res.json.count, 0)
         };
@@ -1037,16 +1045,15 @@
         const filters = gmJsonGet(K_HOF_FILTERS, clone(hofDefault)) || clone(hofDefault);
         const source = String(state.hofSource || "");
         const pagesScanned = num(state.hofPagesScanned, 0);
+        const profilesChecked = num(state.hofProfilesChecked, 0);
+        const activeDays = num(state.hofActiveDays, 3);
         const sampledPages = Array.isArray(state.hofSampledPages) ? state.hofSampledPages : [];
 
         let sourceLabel = "No search yet";
         let sourceClass = "";
-        if (source === "torn_live_hof") {
-          sourceLabel = "Live Torn HoF";
+        if (source === "torn_live_hof_active_only") {
+          sourceLabel = "Live Active HoF";
           sourceClass = "tse_ok";
-        } else if (source === "local_hof_cache") {
-          sourceLabel = "Local HoF Cache";
-          sourceClass = "tse_warn";
         }
 
         bodyEl.innerHTML = `
@@ -1067,10 +1074,10 @@
             </div>
 
             <div class="tse_row" style="margin-top:10px;">
-              <label class="tse_small" style="display:flex;align-items:center;gap:8px;">
-                <input id="tse_hof_local_fallback" type="checkbox" ${filters.use_local_fallback ? "checked" : ""}>
-                Use local cache fallback if live HoF returns nothing
-              </label>
+              <div class="tse_field" style="max-width:160px;">
+                <div class="tse_label">Active Within Days</div>
+                <input class="tse_input" id="tse_hof_active_days" type="number" min="1" max="30" value="${esc(filters.active_days || "3")}">
+              </div>
             </div>
 
             <div class="tse_row" style="margin-top:10px;">
@@ -1087,12 +1094,20 @@
                 <div class="k">Pages Scanned</div>
                 <div class="v">${esc(pagesScanned)}</div>
               </div>
+              <div class="tse_kpi">
+                <div class="k">Profiles Checked</div>
+                <div class="v">${esc(profilesChecked)}</div>
+              </div>
+            </div>
+
+            <div class="tse_small" style="margin-top:10px;">
+              Showing only players active within the last <b>${esc(activeDays)}</b> day(s). Inactives are excluded.
             </div>
 
             ${
               sampledPages.length
                 ? `
-                  <div class="tse_small" style="margin-top:10px;">Sampled page ranges used to compensate for where your search range should exist:</div>
+                  <div class="tse_small" style="margin-top:10px;">Sampled page ranges used to narrow where your live search range exists:</div>
                   <div class="tse_row" style="margin-top:8px;">
                     ${sampledPages.slice(0, 12).map(p => `
                       <span class="tse_pill">
@@ -1115,16 +1130,8 @@
                       <div>
                         <div class="name">${esc(r.name || "Unknown")} ${r.id ? `[${esc(r.id)}]` : ""}</div>
                         <div class="meta">Rank: ${esc(r.rank || "-")} • Total: ${esc(r.total || 0)}</div>
-                        ${
-                          (r.manual_labor || r.intelligence || r.endurance)
-                            ? `<div class="meta">MAN: ${esc(r.manual_labor || 0)} • INT: ${esc(r.intelligence || 0)} • END: ${esc(r.endurance || 0)}</div>`
-                            : ``
-                        }
-                        ${
-                          r.job_status || r.company_name
-                            ? `<div class="meta">${r.job_status ? `Status: ${esc(r.job_status)}` : ``}${r.company_name ? ` • Company: ${esc(r.company_name)}` : ``}</div>`
-                            : ``
-                        }
+                        ${r.last_action_relative ? `<div class="meta">Last Action: ${esc(r.last_action_relative)}</div>` : ``}
+                        ${r.status_state || r.status_description ? `<div class="meta">Status: ${esc(r.status_state || "")}${r.status_description ? ` • ${esc(r.status_description)}` : ``}</div>` : ``}
                       </div>
                       <div class="actions">
                         ${r.id ? `<button class="tse_btn" data-open-player="${esc(r.id)}">Open</button>` : ``}
@@ -1132,7 +1139,7 @@
                     </div>
                   </div>
                 `).join("")
-                : `<div class="tse_card"><div class="tse_small">No HoF results yet.</div></div>`
+                : `<div class="tse_card"><div class="tse_small">No active HoF results yet.</div></div>`
             }
           </div>
         `;
@@ -1146,31 +1153,28 @@
             const min_total = String(bodyEl.querySelector("#tse_hof_min_total").value || "").trim();
             const max_total = String(bodyEl.querySelector("#tse_hof_max_total").value || "").trim();
             const limit = String(bodyEl.querySelector("#tse_hof_limit").value || "50").trim();
-            const use_local_fallback = !!bodyEl.querySelector("#tse_hof_local_fallback").checked;
+            const active_days = String(bodyEl.querySelector("#tse_hof_active_days").value || "3").trim();
 
-            gmJsonSet(K_HOF_FILTERS, { min_total, max_total, limit, use_local_fallback });
+            gmJsonSet(K_HOF_FILTERS, { min_total, max_total, limit, active_days });
 
             const maxVal = parseInt(max_total || "0", 10);
             const response = await runHofSearch({
               min_total: parseInt(min_total || "0", 10),
               max_total: maxVal > 0 ? maxVal : 0,
               limit: parseInt(limit || "50", 10),
-              use_local_fallback
+              active_days: parseInt(active_days || "3", 10)
             });
 
             state.hofResults = response.results || [];
             state.hofSource = response.source || "";
             state.hofPagesScanned = response.pages_scanned || 0;
+            state.hofProfilesChecked = response.profiles_checked || 0;
+            state.hofActiveDays = response.active_days || 3;
             state.hofSampledPages = response.sampled_pages || [];
 
             renderHoF();
             openPanel();
-
-            if (state.hofSource === "local_hof_cache") {
-              toast(`Found ${state.hofResults.length} result(s) from local cache`, true);
-            } else {
-              toast(`Found ${state.hofResults.length} result(s)`, true);
-            }
+            toast(`Found ${state.hofResults.length} active result(s)`, true);
           } catch (e) {
             msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
             toast(e?.message || String(e), false);
@@ -1398,6 +1402,8 @@
             hofResults: [],
             hofSource: "",
             hofPagesScanned: 0,
+            hofProfilesChecked: 0,
+            hofActiveDays: 3,
             hofSampledPages: []
           };
           msg.innerHTML = `<span class="tse_ok">Logged out</span>`;
