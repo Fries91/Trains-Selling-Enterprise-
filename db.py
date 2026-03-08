@@ -88,6 +88,11 @@ def init_db():
         )
     """)
 
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trains_user_id ON trains(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_company_keys_user_company ON company_keys(user_id, company_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_hof_total ON hof_workers(total DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_hof_name ON hof_workers(name)")
+
     con.commit()
     con.close()
 
@@ -252,6 +257,25 @@ def list_hof_workers() -> List[Dict[str, Any]]:
     con = _con()
     cur = con.cursor()
     cur.execute("SELECT * FROM hof_workers ORDER BY total DESC, name ASC")
+    rows = cur.fetchall()
+    con.close()
+    return [dict(r) for r in rows]
+
+
+def list_hof_workers_range(min_total: int, max_total: int, limit: int = 50) -> List[Dict[str, Any]]:
+    con = _con()
+    cur = con.cursor()
+
+    if max_total <= 0:
+        max_total = 10**18
+
+    cur.execute("""
+        SELECT *
+        FROM hof_workers
+        WHERE total >= ? AND total <= ?
+        ORDER BY total DESC, name ASC
+        LIMIT ?
+    """, (int(min_total or 0), int(max_total), int(limit)))
     rows = cur.fetchall()
     con.close()
     return [dict(r) for r in rows]
