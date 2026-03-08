@@ -1,11 +1,12 @@
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-from flask import Flask, jsonify, request, Response
 from dotenv import load_dotenv
+from flask import Flask, Response, jsonify, request
 
 from db import (
     init_db,
@@ -36,7 +37,9 @@ IMPORTER_SECRET = (os.getenv("IMPORTER_SECRET") or "").strip()
 HOF_DATA_FILE = (os.getenv("HOF_DATA_FILE") or "hof_workers.json").strip()
 
 TORN_HOF_URL = "https://api.torn.com/v2/torn/hof"
+TORN_USER_V1_URL = "https://api.torn.com/user/"
 HOF_PAGE_SIZE = 100
+ACTIVE_DAYS_DEFAULT = 3
 
 
 def utc_now() -> str:
@@ -96,6 +99,8 @@ def import_hof_workers_from_payload_local(payload: Any) -> int:
     rows = _extract_rows(payload)
     imported = 0
 
+    from db import upsert_hof_worker
+
     for row in rows:
         player_id = str(
             row.get("id")
@@ -113,7 +118,6 @@ def import_hof_workers_from_payload_local(payload: Any) -> int:
         company_name = str(row.get("company_name") or row.get("company") or "").strip()
         job_status = _normalize_status(row.get("job_status") or row.get("status"), company_name)
 
-        from db import upsert_hof_worker
         upsert_hof_worker(
             player_id=player_id,
             name=name,
@@ -187,15 +191,7 @@ def _hof_pick_rows(payload: Any) -> List[Dict[str, Any]]:
 
 
 def _hof_pick_total(row: Dict[str, Any]) -> int:
-    for key in (
-        "value",
-        "total",
-        "score",
-        "stat",
-        "amount",
-        "workstats",
-        "work_stats",
-    ):
+    for key in ("value", "total", "score", "stat", "amount", "workstats", "work_stats"):
         if key in row:
             return _as_int(row.get(key), 0)
 
@@ -288,11 +284,52 @@ def _page_range(rows: List[Dict[str, Any]]) -> Tuple[int, int]:
     return (max(totals), min(totals))
 
 
-def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: int, limit: int):
+def _fetch_user_profile_activity(api_key: str, player_id: str) -> Dict[str, Any]:
+    r = requests.get(
+        f"{TORN_USER_V1_URL}{player_id}",
+        params={"selections": "profile", "key": api_key},
+        timeout=25,
+    )
+    r.raise_for_status()
+    payload = r.json()
+
+    if isinstance(payload, dict) and payload.get("error"):
+        err = payload.get("error") or {}
+        raise RuntimeError(f'{err.get("code", "")}: {err.get("error", "Unknown API error")}')
+
+    last_action = payload.get("last_action") or {}
+    status = payload.get("status") or {}
+
+    ts = _as_int(last_action.get("timestamp"), 0)
+    relative = str(last_action.get("relative") or "")
+    status_state = str(status.get("state") or "")
+    status_desc = str(status.get("description") or "")
+    status_color = str(status.get("color") or "")
+
+    return {
+        "last_action_timestamp": ts,
+        "last_action_relative": relative,
+        "status_state": status_state,
+        "status_description": status_desc,
+        "status_color": status_color,
+    }
+
+
+def _is_recently_active(activity: Dict[str, Any], active_days: int) -> bool:
+    ts = _as_int(activity.get("last_action_timestamp"), 0)
+    if ts <= 0:
+        return False
+
+    cutoff = int(time.time()) - (max(1, int(active_days)) * 86400)
+    return ts >= cutoff
+
+
+def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: int, limit: int, active_days: int):
     visited_offsets = set()
     results_by_id: Dict[str, Dict[str, Any]] = {}
     sampled_pages: List[Dict[str, Any]] = []
     pages_scanned = 0
+    profiles_checked = 0
 
     def fetch_page(offset: int):
         nonlocal pages_scanned
@@ -312,6 +349,38 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
         })
         return rows, hi, lo
 
+    def maybe_add_active_matches(rows: List[Dict[str, Any]], offset: int):
+        nonlocal profiles_checked
+        if not rows:
+            return
+
+        candidates = _rows_to_results(rows, offset, min_total, max_total)
+        for item in candidates:
+            if len(results_by_id) >= limit:
+                break
+
+            player_id = str(item.get("id") or "").strip()
+            if not player_id:
+                continue
+            if player_id in results_by_id:
+                continue
+
+            try:
+                activity = _fetch_user_profile_activity(api_key, player_id)
+                profiles_checked += 1
+            except Exception:
+                continue
+
+            if not _is_recently_active(activity, active_days):
+                continue
+
+            item["last_action_relative"] = activity.get("last_action_relative", "")
+            item["last_action_timestamp"] = activity.get("last_action_timestamp", 0)
+            item["status_state"] = activity.get("status_state", "")
+            item["status_description"] = activity.get("status_description", "")
+            item["status_color"] = activity.get("status_color", "")
+            results_by_id[player_id] = item
+
     low_off = 0
     high_off = 0
     probe = 0
@@ -322,7 +391,6 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
     ]
 
     prev_probe = 0
-    prev_hi = None
     prev_lo = None
 
     for probe in probe_sequence:
@@ -337,11 +405,13 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
             low_off = probe
             high_off = probe
             found_band = True
+            maybe_add_active_matches(rows, probe)
+            if len(results_by_id) >= limit:
+                break
             break
 
         if lo > max_total:
             prev_probe = probe
-            prev_hi = hi
             prev_lo = lo
             continue
 
@@ -362,13 +432,14 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
     left = min(low_off, high_off)
     right = max(low_off, high_off)
 
-    while right - left > HOF_PAGE_SIZE and pages_scanned < 120:
+    while right - left > HOF_PAGE_SIZE and pages_scanned < 120 and len(results_by_id) < limit:
         mid = ((left + right) // (2 * HOF_PAGE_SIZE)) * HOF_PAGE_SIZE
         rows, hi, lo = fetch_page(mid)
         if rows is None or not rows:
             break
 
         if hi >= min_total and lo <= max_total:
+            maybe_add_active_matches(rows, mid)
             left = max(0, mid - HOF_PAGE_SIZE)
             right = mid + HOF_PAGE_SIZE
             break
@@ -386,17 +457,14 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
     end = max(start, right + (10 * HOF_PAGE_SIZE))
 
     for offset in range(start, end + HOF_PAGE_SIZE, HOF_PAGE_SIZE):
-        if pages_scanned >= 180:
+        if pages_scanned >= 180 or len(results_by_id) >= limit:
             break
 
         rows, hi, lo = fetch_page(offset)
         if rows is None or not rows:
             continue
 
-        matches = _rows_to_results(rows, offset, min_total, max_total)
-        for item in matches:
-            key = item["id"] or f"rank-{item['rank']}"
-            results_by_id[key] = item
+        maybe_add_active_matches(rows, offset)
 
         if hi < min_total and offset > right:
             break
@@ -407,8 +475,10 @@ def _collect_live_hof_results_binary(api_key: str, min_total: int, max_total: in
     sampled_pages.sort(key=lambda x: x["offset"])
     meta = {
         "pages_scanned": pages_scanned,
+        "profiles_checked": profiles_checked,
         "sampled_pages": sampled_pages[:60],
         "visited_offsets": sorted(visited_offsets),
+        "active_days": active_days,
     }
     return results[:limit], meta
 
@@ -759,6 +829,7 @@ def hof_search():
     min_total = max(0, _as_int(body.get("min_total"), 0))
     max_total = _as_int(body.get("max_total"), 0)
     limit = max(1, min(100, _as_int(body.get("limit"), 50)))
+    active_days = max(1, min(30, _as_int(body.get("active_days"), ACTIVE_DAYS_DEFAULT)))
 
     if max_total <= 0:
         max_total = 10**18
@@ -767,14 +838,22 @@ def hof_search():
         return fail("max_total must be greater than or equal to min_total", 400)
 
     try:
-        live_results, meta = _collect_live_hof_results_binary(api_key, min_total, max_total, limit)
+        live_results, meta = _collect_live_hof_results_binary(
+            api_key=api_key,
+            min_total=min_total,
+            max_total=max_total,
+            limit=limit,
+            active_days=active_days,
+        )
 
         return ok({
             "results": live_results,
             "count": len(live_results),
-            "source": "torn_live_hof",
+            "source": "torn_live_hof_active_only",
             "pages_scanned": meta.get("pages_scanned", 0),
+            "profiles_checked": meta.get("profiles_checked", 0),
             "sampled_pages": meta.get("sampled_pages", []),
+            "active_days": meta.get("active_days", active_days),
             "server_time": utc_now(),
         })
 
