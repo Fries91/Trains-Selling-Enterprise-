@@ -9,21 +9,18 @@ def _get(path: str, params: Dict[str, Any], timeout: int = 25) -> Dict[str, Any]
     url = f"{API_BASE}{path}"
     r = requests.get(url, params=params, timeout=timeout)
     r.raise_for_status()
-    return r.json()
+    data = r.json()
+    if "error" in data:
+        raise ValueError(data["error"].get("error", "Torn API error"))
+    return data
 
 
 def me_basic(api_key: str) -> Dict[str, Any]:
-    data = _get("/user/", {"selections": "basic", "key": api_key})
-    if "error" in data:
-        raise ValueError(data["error"].get("error", "Torn API error"))
-    return data
+    return _get("/user/", {"selections": "basic", "key": api_key})
 
 
 def company_profile(api_key: str, company_id: str) -> Dict[str, Any]:
-    data = _get("/company/", {"selections": "profile,employees", "id": company_id, "key": api_key})
-    if "error" in data:
-        raise ValueError(data["error"].get("error", "Torn API error"))
-    return data
+    return _get("/company/", {"selections": "profile,employees", "id": company_id, "key": api_key})
 
 
 def normalize_company(company_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
