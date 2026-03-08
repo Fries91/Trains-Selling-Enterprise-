@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import requests
 from flask import Flask, jsonify, request, Response
 from dotenv import load_dotenv
 
@@ -147,6 +148,117 @@ def _append_company_id(user_id: str, company_id: str) -> List[str]:
         ids.append(company_id)
         set_company_ids(user_id, ids)
     return ids
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        raw = str(value).replace(",", "").strip()
+        if raw == "":
+            return default
+        return int(float(raw))
+    except Exception:
+        return default
+
+
+def _hof_pick_rows(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("hof", "items", "rankings", "players", "data", "results"):
+        val = payload.get(key)
+        if isinstance(val, list):
+            return [x for x in val if isinstance(x, dict)]
+        if isinstance(val, dict):
+            for subkey in ("items", "players", "entries", "rows", "data", "results"):
+                subval = val.get(subkey)
+                if isinstance(subval, list):
+                    return [x for x in subval if isinstance(x, dict)]
+
+    for _, val in payload.items():
+        if isinstance(val, list) and val and isinstance(val[0], dict):
+            return [x for x in val if isinstance(x, dict)]
+
+    return []
+
+
+def _hof_pick_total(row: Dict[str, Any]) -> int:
+    for key in (
+        "value",
+        "total",
+        "score",
+        "stat",
+        "amount",
+        "workstats",
+        "work_stats",
+    ):
+        if key in row:
+            return _as_int(row.get(key), 0)
+
+    man = _as_int(row.get("manual_labor") or row.get("man"), 0)
+    intl = _as_int(row.get("intelligence") or row.get("int"), 0)
+    end = _as_int(row.get("endurance") or row.get("end"), 0)
+    if man or intl or end:
+        return man + intl + end
+
+    return 0
+
+
+def _hof_pick_rank(row: Dict[str, Any], fallback_rank: int) -> int:
+    for key in ("rank", "position", "place"):
+        if key in row:
+            return _as_int(row.get(key), fallback_rank)
+    return fallback_rank
+
+
+def _hof_pick_player_id(row: Dict[str, Any]) -> str:
+    for key in ("player_id", "user_id", "id"):
+        val = str(row.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _hof_pick_name(row: Dict[str, Any]) -> str:
+    for key in ("name", "player_name", "username"):
+        val = str(row.get(key) or "").strip()
+        if val:
+            return val
+    return "Unknown"
+
+
+def _fetch_torn_hof_page(api_key: str, offset: int, limit: int) -> List[Dict[str, Any]]:
+    url = "https://api.torn.com/v2/torn/hof"
+
+    attempts = [
+        {"key": api_key, "cat": "workstats", "offset": offset, "limit": limit},
+        {"key": api_key, "category": "workstats", "offset": offset, "limit": limit},
+    ]
+
+    last_error = None
+
+    for params in attempts:
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            r.raise_for_status()
+            payload = r.json()
+
+            if isinstance(payload, dict) and payload.get("error"):
+                err = payload.get("error") or {}
+                raise RuntimeError(f'{err.get("code", "")}: {err.get("error", "Unknown API error")}')
+
+            rows = _hof_pick_rows(payload)
+            if rows:
+                return rows
+        except Exception as e:
+            last_error = e
+
+    if last_error:
+        raise last_error
+
+    return []
 
 
 @app.after_request
@@ -479,49 +591,85 @@ def hof_search():
     if not session:
         return fail("Missing/invalid session token", 401)
 
+    user = get_user(session["user_id"])
+    if not user:
+        return fail("User not found", 404)
+
+    api_key = str(user.get("api_key") or "").strip()
+    if not api_key:
+        return fail("Missing user API key", 400)
+
     try:
         body = request.get_json(force=True, silent=False) or {}
     except Exception:
         return fail("Bad JSON", 400)
 
-    def as_int(value: Any, default: int = 0) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return default
+    min_total = max(0, _as_int(body.get("min_total"), 0))
+    max_total = _as_int(body.get("max_total"), 0)
+    limit = max(1, min(100, _as_int(body.get("limit"), 50)))
 
-    min_total = as_int(body.get("min_total"), 0)
-    max_total = as_int(body.get("max_total"), 10**12)
     if max_total <= 0:
-        max_total = 10**12
+        max_total = 10**18
 
-    min_man = as_int(body.get("min_man"), 0)
-    min_int = as_int(body.get("min_int"), 0)
-    min_end = as_int(body.get("min_end"), 0)
-    limit = max(1, min(100, as_int(body.get("limit"), 50)))
-    status = str(body.get("status") or "any").strip().lower()
+    results: List[Dict[str, Any]] = []
+    offset = 0
+    page_size = 100
+    pages_scanned = 0
+    max_pages = 40
+    stop_below_min = False
 
-    results = []
-    for row in list_hof_workers():
-        man = int(row.get("manual_labor") or 0)
-        intl = int(row.get("intelligence") or 0)
-        end = int(row.get("endurance") or 0)
-        total = man + intl + end
-        job_status = str(row.get("job_status") or "unknown").lower()
+    try:
+        while len(results) < limit and pages_scanned < max_pages and not stop_below_min:
+            rows = _fetch_torn_hof_page(api_key, offset, page_size)
+            if not rows:
+                break
 
-        if total < min_total or total > max_total:
-            continue
-        if man < min_man or intl < min_int or end < min_end:
-            continue
-        if status != "any" and job_status != status:
-            continue
+            for idx, row in enumerate(rows):
+                total = _hof_pick_total(row)
+                rank = _hof_pick_rank(row, offset + idx + 1)
 
-        row["total"] = total
-        results.append(row)
+                if total < min_total:
+                    stop_below_min = True
+                    break
 
-    results.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
-    sliced = results[:limit]
-    return ok({"results": sliced, "count": len(sliced), "server_time": utc_now()})
+                if total > max_total:
+                    continue
+
+                player_id = _hof_pick_player_id(row)
+                name = _hof_pick_name(row)
+
+                results.append({
+                    "id": player_id,
+                    "name": name,
+                    "rank": rank,
+                    "total": total,
+                    "profile_url": f"https://www.torn.com/profiles.php?XID={player_id}" if player_id else "",
+                })
+
+                if len(results) >= limit:
+                    break
+
+            if len(rows) < page_size:
+                break
+
+            offset += page_size
+            pages_scanned += 1
+
+        results.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
+
+        return ok({
+            "results": results[:limit],
+            "count": len(results[:limit]),
+            "source": "torn_live_hof",
+            "server_time": utc_now(),
+        })
+
+    except requests.HTTPError as e:
+        return fail("Torn HoF HTTP error", 502, str(e))
+    except requests.RequestException as e:
+        return fail("Torn HoF request failed", 502, str(e))
+    except Exception as e:
+        return fail("HoF search failed", 500, str(e))
 
 
 @app.route("/hof/import", methods=["POST", "OPTIONS"])
