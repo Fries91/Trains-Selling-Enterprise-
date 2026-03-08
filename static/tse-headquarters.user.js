@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         T.S.E Headquarters 🏤
 // @namespace    fries91-tse-hq
-// @version      8.5.2
-// @description  T.S.E Headquarters recovery build. Restores icon + overlay + live HoF total search.
+// @version      8.5.3
+// @description  T.S.E Headquarters. Restores icon + overlay + click toggle + on-top icon + live HoF total search.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
@@ -48,6 +48,8 @@
     let started = false;
     let observer = null;
     let remountTimer = null;
+    let badge = null;
+    let panel = null;
 
     function clone(obj) {
       return JSON.parse(JSON.stringify(obj));
@@ -140,7 +142,7 @@
         width:48px;
         height:48px;
         border-radius:14px;
-        display:flex;
+        display:flex !important;
         align-items:center;
         justify-content:center;
         background:linear-gradient(180deg, rgba(214,179,90,.25), rgba(15,27,51,.96));
@@ -181,6 +183,12 @@
         box-shadow:0 18px 60px rgba(0,0,0,.55);
         color:#eef3ff;
         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      }
+
+      #tse_hq_panel.tse_open{
+        display:block !important;
+        visibility:visible !important;
+        opacity:1 !important;
       }
 
       #tse_hq_header{
@@ -338,19 +346,19 @@
       const old = document.getElementById("tse_hq_badge");
       if (old) old.remove();
 
-      const badge = document.createElement("div");
-      badge.id = "tse_hq_badge";
-      badge.innerHTML = `<div class="dot"></div><div class="emoji">🏤</div>`;
-      return badge;
+      const el = document.createElement("div");
+      el.id = "tse_hq_badge";
+      el.innerHTML = `<div class="dot"></div><div class="emoji">🏤</div>`;
+      return el;
     }
 
     function buildPanel() {
       const old = document.getElementById("tse_hq_panel");
       if (old) old.remove();
 
-      const panel = document.createElement("div");
-      panel.id = "tse_hq_panel";
-      panel.innerHTML = `
+      const el = document.createElement("div");
+      el.id = "tse_hq_panel";
+      el.innerHTML = `
         <div id="tse_hq_header">
           <div id="tse_hq_title">
             <div class="main">T.S.E Headquarters</div>
@@ -363,11 +371,13 @@
         <div id="tse_hq_tabs"></div>
         <div id="tse_hq_body"></div>
       `;
-      return panel;
+      return el;
     }
 
-    let badge = buildBadge();
-    let panel = buildPanel();
+    function ensureOnTop() {
+      if (badge) badge.style.zIndex = "2147483647";
+      if (panel) panel.style.zIndex = "2147483646";
+    }
 
     function ensureMounted() {
       if (!document.body) return false;
@@ -376,18 +386,21 @@
         badge = buildBadge();
         document.body.appendChild(badge);
         started = false;
+      } else {
+        badge = document.getElementById("tse_hq_badge");
       }
 
       if (!document.getElementById("tse_hq_panel")) {
         panel = buildPanel();
         document.body.appendChild(panel);
         started = false;
+      } else {
+        panel = document.getElementById("tse_hq_panel");
       }
 
-      if (!started) {
-        start();
-      }
+      ensureOnTop();
 
+      if (!started) start();
       return true;
     }
 
@@ -410,6 +423,8 @@
         observer = new MutationObserver(() => {
           if (!document.getElementById("tse_hq_badge") || !document.getElementById("tse_hq_panel")) {
             scheduleEnsureMounted();
+          } else {
+            ensureOnTop();
           }
         });
         observer.observe(document.documentElement || document.body, {
@@ -419,7 +434,10 @@
       }
 
       setInterval(() => {
-        try { ensureMounted(); } catch {}
+        try {
+          ensureMounted();
+          ensureOnTop();
+        } catch {}
       }, 3000);
     }
 
@@ -576,13 +594,18 @@
 
       function openPanel() {
         ui.open = true;
+        panel.classList.add("tse_open");
         panel.style.display = "block";
+        panel.style.visibility = "visible";
+        panel.style.opacity = "1";
+        ensureOnTop();
         applyUIPositions();
         saveUI();
       }
 
       function closePanel() {
         ui.open = false;
+        panel.classList.remove("tse_open");
         panel.style.display = "none";
         saveUI();
       }
@@ -591,6 +614,7 @@
         openPanel();
         try { await fetchState(); } catch {}
         renderBody();
+        openPanel();
       }
 
       function togglePanel() {
@@ -604,6 +628,12 @@
         e.stopPropagation();
         togglePanel();
       };
+
+      badge.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        togglePanel();
+      }, { passive: false });
 
       const closeBtn = panel.querySelector("#tse_hq_close");
       const refreshBtn = panel.querySelector("#tse_hq_refresh");
@@ -620,6 +650,7 @@
           e.preventDefault();
           await fetchState();
           renderBody();
+          if (ui.open) openPanel();
         };
       }
 
@@ -639,6 +670,7 @@
             }
             renderTabs();
             renderBody();
+            if (ui.open) openPanel();
           };
           tabsEl.appendChild(el);
         }
@@ -919,6 +951,7 @@
             await addTrain({ company_id, buyer, amount, note });
             await fetchState();
             renderTrains();
+            openPanel();
             toast("Train record saved", true);
           } catch (e) {
             msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
@@ -932,6 +965,7 @@
               await deleteTrain(btn.getAttribute("data-del-train"));
               await fetchState();
               renderTrains();
+              openPanel();
               toast("Train record deleted", true);
             } catch (e) {
               toast(e?.message || String(e), false);
@@ -1009,6 +1043,7 @@
             });
 
             renderHoF();
+            openPanel();
             toast(`Found ${state.hofResults.length} result(s)`, true);
           } catch (e) {
             msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
@@ -1132,6 +1167,7 @@
               if (input) input.value = "";
               await fetchState();
               renderKeys();
+              openPanel();
               toast(`Company key saved for ${cid}`, true);
             } catch (e) {
               if (msg) msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
@@ -1149,6 +1185,7 @@
               await deleteCompanyKeyFromServer(cid);
               await fetchState();
               renderKeys();
+              openPanel();
               toast(`Company key deleted for ${cid}`, true);
             } catch (e) {
               toast(e?.message || String(e), false);
@@ -1215,6 +1252,7 @@
             if (!auth.ok) throw new Error(auth.error);
             await fetchState();
             msg.innerHTML = `<span class="tse_ok">Logged in</span>`;
+            openPanel();
             toast("Logged in", true);
           } catch (e) {
             msg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
@@ -1258,6 +1296,7 @@
             area.value = merged.join(", ");
             await fetchState();
             cmsg.innerHTML = `<span class="tse_ok">Saved ${merged.length} ID(s)</span>`;
+            openPanel();
             toast("Company IDs saved", true);
           } catch (e) {
             cmsg.innerHTML = `<span class="tse_err">${esc(e?.message || String(e))}</span>`;
@@ -1280,11 +1319,8 @@
       setStatusLine("made by Fries91", true);
       renderBody();
 
-      if (ui.open) {
-        openAndRefresh();
-      } else {
-        closePanel();
-      }
+      if (ui.open) openPanel();
+      else closePanel();
     }
 
     safeMount();
